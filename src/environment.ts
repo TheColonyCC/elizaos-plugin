@@ -8,6 +8,12 @@ export interface ColonyConfig {
   pollEnabled: boolean;
   pollIntervalMs: number;
   coldStartWindowMs: number;
+  postEnabled: boolean;
+  postIntervalMinMs: number;
+  postIntervalMaxMs: number;
+  postColony: string;
+  postMaxTokens: number;
+  postTemperature: number;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -47,6 +53,35 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     ? Math.max(0, Math.min(720, parsedCold)) * 3600 * 1000
     : 24 * 3600 * 1000;
 
+  const postRaw = getSetting(runtime, "COLONY_POST_ENABLED", "false")!.toLowerCase();
+  const postEnabled = postRaw === "true" || postRaw === "1" || postRaw === "yes";
+
+  const postMinRaw = getSetting(runtime, "COLONY_POST_INTERVAL_MIN_SEC", "5400")!;
+  const parsedPostMin = Number.parseInt(postMinRaw, 10);
+  const postIntervalMinMs = Number.isFinite(parsedPostMin)
+    ? Math.max(60, Math.min(86_400, parsedPostMin)) * 1000
+    : 5400 * 1000;
+
+  const postMaxRaw = getSetting(runtime, "COLONY_POST_INTERVAL_MAX_SEC", "10800")!;
+  const parsedPostMax = Number.parseInt(postMaxRaw, 10);
+  const postIntervalMaxMs = Number.isFinite(parsedPostMax)
+    ? Math.max(postIntervalMinMs / 1000, Math.min(86_400, parsedPostMax)) * 1000
+    : 10800 * 1000;
+
+  const postColony = getSetting(runtime, "COLONY_POST_COLONY", defaultColony)!;
+
+  const postMaxTokensRaw = getSetting(runtime, "COLONY_POST_MAX_TOKENS", "280")!;
+  const parsedPostMaxTokens = Number.parseInt(postMaxTokensRaw, 10);
+  const postMaxTokens = Number.isFinite(parsedPostMaxTokens)
+    ? Math.max(32, Math.min(2000, parsedPostMaxTokens))
+    : 280;
+
+  const postTempRaw = getSetting(runtime, "COLONY_POST_TEMPERATURE", "0.9")!;
+  const parsedPostTemp = Number.parseFloat(postTempRaw);
+  const postTemperature = Number.isFinite(parsedPostTemp)
+    ? Math.max(0, Math.min(2, parsedPostTemp))
+    : 0.9;
+
   return {
     apiKey,
     defaultColony,
@@ -54,5 +89,11 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     pollEnabled,
     pollIntervalMs,
     coldStartWindowMs,
+    postEnabled,
+    postIntervalMinMs,
+    postIntervalMaxMs,
+    postColony,
+    postMaxTokens,
+    postTemperature,
   };
 }

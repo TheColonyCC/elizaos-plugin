@@ -85,6 +85,20 @@ describe("ColonyService", () => {
     await expect(service.stop()).resolves.toBeUndefined();
   });
 
+  it("spawns and stops a post client when autonomous posting is enabled", async () => {
+    mockGetMe.mockResolvedValue({ username: "poster", karma: 0 });
+    mockGetNotifications.mockResolvedValue([]);
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_xyz",
+      COLONY_POST_ENABLED: "true",
+      COLONY_POST_INTERVAL_MIN_SEC: "60",
+      COLONY_POST_INTERVAL_MAX_SEC: "120",
+    });
+    const service = await ColonyService.start(runtime);
+    expect(service.postClient).not.toBeNull();
+    await expect(service.stop()).resolves.toBeUndefined();
+  });
+
   it("capabilityDescription is set", () => {
     const s = new ColonyService();
     expect(typeof s.capabilityDescription).toBe("string");

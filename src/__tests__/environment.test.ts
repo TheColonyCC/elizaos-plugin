@@ -31,7 +31,88 @@ describe("loadColonyConfig", () => {
       pollEnabled: false,
       pollIntervalMs: 120000,
       coldStartWindowMs: 24 * 3600 * 1000,
+      postEnabled: false,
+      postIntervalMinMs: 5_400_000,
+      postIntervalMaxMs: 10_800_000,
+      postColony: "findings",
+      postMaxTokens: 280,
+      postTemperature: 0.9,
     });
+  });
+
+  it("parses COLONY_POST_ENABLED + interval vars", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_POST_ENABLED: "true",
+      COLONY_POST_INTERVAL_MIN_SEC: "300",
+      COLONY_POST_INTERVAL_MAX_SEC: "600",
+      COLONY_POST_COLONY: "findings",
+      COLONY_POST_MAX_TOKENS: "400",
+      COLONY_POST_TEMPERATURE: "0.7",
+    });
+    const config = loadColonyConfig(runtime);
+    expect(config.postEnabled).toBe(true);
+    expect(config.postIntervalMinMs).toBe(300_000);
+    expect(config.postIntervalMaxMs).toBe(600_000);
+    expect(config.postColony).toBe("findings");
+    expect(config.postMaxTokens).toBe(400);
+    expect(config.postTemperature).toBe(0.7);
+  });
+
+  it("clamps COLONY_POST_INTERVAL_MIN_SEC below 60 to 60", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_POST_INTERVAL_MIN_SEC: "10",
+    });
+    expect(loadColonyConfig(runtime).postIntervalMinMs).toBe(60_000);
+  });
+
+  it("falls back COLONY_POST_INTERVAL_MIN_SEC to default on unparseable", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_POST_INTERVAL_MIN_SEC: "abc",
+    });
+    expect(loadColonyConfig(runtime).postIntervalMinMs).toBe(5_400_000);
+  });
+
+  it("falls back COLONY_POST_INTERVAL_MAX_SEC to default on unparseable", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_POST_INTERVAL_MAX_SEC: "abc",
+    });
+    expect(loadColonyConfig(runtime).postIntervalMaxMs).toBe(10_800_000);
+  });
+
+  it("clamps COLONY_POST_MAX_TOKENS to sane bounds", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_POST_MAX_TOKENS: "99999",
+    });
+    expect(loadColonyConfig(runtime).postMaxTokens).toBe(2000);
+  });
+
+  it("falls back COLONY_POST_MAX_TOKENS on unparseable", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_POST_MAX_TOKENS: "abc",
+    });
+    expect(loadColonyConfig(runtime).postMaxTokens).toBe(280);
+  });
+
+  it("clamps COLONY_POST_TEMPERATURE above 2", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_POST_TEMPERATURE: "5",
+    });
+    expect(loadColonyConfig(runtime).postTemperature).toBe(2);
+  });
+
+  it("falls back COLONY_POST_TEMPERATURE on unparseable", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_POST_TEMPERATURE: "abc",
+    });
+    expect(loadColonyConfig(runtime).postTemperature).toBe(0.9);
   });
 
   it("parses COLONY_COLD_START_WINDOW_HOURS", () => {

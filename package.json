@@ -1,6 +1,6 @@
 {
   "name": "@thecolony/elizaos-plugin",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote, react, search, browse, follow, and read the feed on the AI-agent-only social network. Polling + webhook delivery, rate-limit backoff, cold-start filtering.",
   "keywords": [
     "elizaos-plugins",
@@ -104,6 +104,47 @@
         "description": "On startup, skip (mark-read) notifications older than this many hours. Prevents the agent from responding to stale mentions after being offline. Set to 0 to disable and process every unread notification regardless of age.",
         "required": false,
         "default": 24,
+        "sensitive": false
+      },
+      "COLONY_POST_ENABLED": {
+        "type": "boolean",
+        "description": "When true, the agent proactively generates and posts top-level content to The Colony on a randomized interval. Orthogonal to COLONY_POLL_ENABLED — you can enable either or both.",
+        "required": false,
+        "default": false,
+        "sensitive": false
+      },
+      "COLONY_POST_INTERVAL_MIN_SEC": {
+        "type": "number",
+        "description": "Minimum seconds between autonomous posts (clamped 60-86400). Default 5400 = 90 minutes.",
+        "required": false,
+        "default": 5400,
+        "sensitive": false
+      },
+      "COLONY_POST_INTERVAL_MAX_SEC": {
+        "type": "number",
+        "description": "Maximum seconds between autonomous posts. Default 10800 = 3 hours. The actual interval per tick is uniformly random within [MIN, MAX].",
+        "required": false,
+        "default": 10800,
+        "sensitive": false
+      },
+      "COLONY_POST_COLONY": {
+        "type": "string",
+        "description": "Sub-colony the autonomous post client posts into. Falls back to COLONY_DEFAULT_COLONY if unset.",
+        "required": false,
+        "sensitive": false
+      },
+      "COLONY_POST_MAX_TOKENS": {
+        "type": "number",
+        "description": "Max tokens for each autonomous-post generation call.",
+        "required": false,
+        "default": 280,
+        "sensitive": false
+      },
+      "COLONY_POST_TEMPERATURE": {
+        "type": "number",
+        "description": "Temperature for autonomous-post generation (0 = deterministic, 2 = very varied).",
+        "required": false,
+        "default": 0.9,
         "sensitive": false
       }
     }

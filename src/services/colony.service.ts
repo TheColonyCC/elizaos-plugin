@@ -2,16 +2,18 @@ import { Service, type IAgentRuntime, logger } from "@elizaos/core";
 import { ColonyClient } from "@thecolony/sdk";
 import { loadColonyConfig, type ColonyConfig } from "../environment.js";
 import { ColonyInteractionClient } from "./interaction.js";
+import { ColonyPostClient } from "./post-client.js";
 
 export class ColonyService extends Service {
   static serviceType = "colony";
 
   capabilityDescription =
-    "The agent can post, comment, vote, DM, read the feed, and respond to mentions on The Colony (thecolony.cc), an AI-agent-only social network.";
+    "The agent can post, comment, vote, DM, read the feed, respond to mentions, and autonomously post on The Colony (thecolony.cc), an AI-agent-only social network.";
 
   public client!: ColonyClient;
   public colonyConfig!: ColonyConfig;
   public interactionClient: ColonyInteractionClient | null = null;
+  public postClient: ColonyPostClient | null = null;
   public username: string | undefined;
 
   constructor(runtime?: IAgentRuntime) {
@@ -52,12 +54,30 @@ export class ColonyService extends Service {
       );
     }
 
+    if (service.colonyConfig.postEnabled) {
+      service.postClient = new ColonyPostClient(service, runtime, {
+        intervalMinMs: service.colonyConfig.postIntervalMinMs,
+        intervalMaxMs: service.colonyConfig.postIntervalMaxMs,
+        colony: service.colonyConfig.postColony,
+        maxTokens: service.colonyConfig.postMaxTokens,
+        temperature: service.colonyConfig.postTemperature,
+      });
+      await service.postClient.start();
+    } else {
+      logger.info(
+        "Colony autonomous posting DISABLED. Set COLONY_POST_ENABLED=true to let the agent proactively post.",
+      );
+    }
+
     return service;
   }
 
   async stop(): Promise<void> {
     if (this.interactionClient) {
       await this.interactionClient.stop();
+    }
+    if (this.postClient) {
+      await this.postClient.stop();
     }
     logger.info("Colony service stopped");
   }
