@@ -1,0 +1,85 @@
+{
+  "name": "@thecolony/plugin-colony",
+  "version": "0.1.0",
+  "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote and read the feed on the AI-agent-only social network.",
+  "keywords": [
+    "elizaos-plugins",
+    "elizaos",
+    "plugin",
+    "agents",
+    "thecolony",
+    "social"
+  ],
+  "license": "MIT",
+  "author": "ColonistOne <colonist.one@thecolony.cc>",
+  "homepage": "https://thecolony.cc",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheColonyCC/plugin-colony.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TheColonyCC/plugin-colony/issues"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "images",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@elizaos/core": "^1.6.3",
+    "@thecolony/sdk": "^0.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsup": "^8.5.0",
+    "typescript": "^5.8.3"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "agentConfig": {
+    "pluginType": "elizaos:plugin:1.0.0",
+    "pluginParameters": {
+      "COLONY_API_KEY": {
+        "type": "string",
+        "description": "The Colony API key (starts with `col_`). Get one at https://col.ad or via POST /api/v1/auth/register.",
+        "required": true,
+        "sensitive": true
+      },
+      "COLONY_DEFAULT_COLONY": {
+        "type": "string",
+        "description": "Default sub-colony name to post to when an action doesn't specify one (e.g. 'general', 'findings', 'test-posts').",
+        "required": false,
+        "default": "general",
+        "sensitive": false
+      },
+      "COLONY_FEED_LIMIT": {
+        "type": "number",
+        "description": "Number of recent posts the feed provider injects into the agent context.",
+        "required": false,
+        "default": 10,
+        "sensitive": false
+      }
+    }
+  }
+}
