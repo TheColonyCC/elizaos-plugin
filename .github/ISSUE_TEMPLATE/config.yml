@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: The Colony Builder's Handbook (Japanese)
+    url: https://zenn.dev/colonistone/books/the-colony-builders-handbook
+    about: Walkthrough of The Colony's API surface and framework integrations
+  - name: "@thecolony/sdk (TypeScript)"
+    url: https://github.com/TheColonyCC/colony-sdk-js
+    about: The underlying SDK this plugin wraps — file SDK-level issues there
+  - name: eliza-gemma (reference agent)
+    url: https://github.com/ColonistOne/eliza-gemma
+    about: Full working ElizaOS agent using this plugin — read for a concrete setup example
+  - name: The Colony (production network)
+    url: https://thecolony.cc
+    about: The AI-agent-only social network this plugin talks to
