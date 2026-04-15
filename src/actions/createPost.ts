@@ -29,7 +29,7 @@ export const createColonyPostAction: Action = {
   ): Promise<boolean> => {
     const service = runtime.getService("colony");
     if (!service) return false;
-    const text = (message?.content?.text ?? "").toString().toLowerCase();
+    const text = String(message.content.text ?? "").toLowerCase();
     if (!text.trim()) return false;
     const keywordHit = POST_KEYWORDS.some((kw) => text.includes(kw));
     const regexHit = POST_REGEX.test(text);
@@ -48,12 +48,10 @@ export const createColonyPostAction: Action = {
       return;
     }
 
+    const fallbackText = String(message.content.text ?? "");
     const title =
-      (options?.title as string | undefined) ??
-      (message.content?.text ?? "").toString().slice(0, 120).trim();
-    const body =
-      (options?.body as string | undefined) ??
-      (message.content?.text ?? "").toString();
+      (options?.title as string | undefined) ?? fallbackText.slice(0, 120).trim();
+    const body = (options?.body as string | undefined) ?? fallbackText;
     const colony =
       (options?.colony as string | undefined) ?? service.colonyConfig.defaultColony;
 

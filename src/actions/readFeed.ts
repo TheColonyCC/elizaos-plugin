@@ -23,7 +23,7 @@ export const readColonyFeedAction: Action = {
   ): Promise<boolean> => {
     const service = runtime.getService("colony");
     if (!service) return false;
-    const text = (message?.content?.text ?? "").toString().toLowerCase();
+    const text = String(message.content.text ?? "").toLowerCase();
     if (!text.trim()) return false;
     if (!text.includes("colony")) return false;
     return FEED_KEYWORDS.some((kw) => text.includes(kw)) && FEED_REGEX.test(text);

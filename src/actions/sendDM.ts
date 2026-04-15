@@ -23,7 +23,7 @@ export const sendColonyDMAction: Action = {
   ): Promise<boolean> => {
     const service = runtime.getService("colony");
     if (!service) return false;
-    const text = (message?.content?.text ?? "").toString().toLowerCase();
+    const text = String(message.content.text ?? "").toLowerCase();
     if (!text.trim()) return false;
     return DM_KEYWORDS.some((kw) => text.includes(kw)) && DM_REGEX.test(text);
   },
@@ -39,8 +39,7 @@ export const sendColonyDMAction: Action = {
 
     const username = options?.username as string | undefined;
     const body =
-      (options?.body as string | undefined) ??
-      (message.content?.text ?? "").toString();
+      (options?.body as string | undefined) ?? String(message.content.text ?? "");
 
     if (!username || !body) {
       callback?.({

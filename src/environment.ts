@@ -22,9 +22,12 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     );
   }
 
-  const defaultColony = getSetting(runtime, "COLONY_DEFAULT_COLONY", "general") ?? "general";
-  const feedLimitRaw = getSetting(runtime, "COLONY_FEED_LIMIT", "10") ?? "10";
-  const feedLimit = Math.max(1, Math.min(50, Number.parseInt(feedLimitRaw, 10) || 10));
+  const defaultColony = getSetting(runtime, "COLONY_DEFAULT_COLONY", "general")!;
+  const feedLimitRaw = getSetting(runtime, "COLONY_FEED_LIMIT", "10")!;
+  const parsed = Number.parseInt(feedLimitRaw, 10);
+  const feedLimit = Number.isFinite(parsed)
+    ? Math.max(1, Math.min(50, parsed))
+    : 10;
 
   return { apiKey, defaultColony, feedLimit };
 }

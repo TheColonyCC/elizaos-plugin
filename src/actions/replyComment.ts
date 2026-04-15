@@ -23,7 +23,7 @@ export const replyColonyAction: Action = {
   ): Promise<boolean> => {
     const service = runtime.getService("colony");
     if (!service) return false;
-    const text = (message?.content?.text ?? "").toString().toLowerCase();
+    const text = String(message.content.text ?? "").toLowerCase();
     if (!text.trim()) return false;
     return (
       REPLY_KEYWORDS.some((kw) => text.includes(kw)) && REPLY_REGEX.test(text)
@@ -42,8 +42,7 @@ export const replyColonyAction: Action = {
     const postId = options?.postId as string | undefined;
     const parentId = options?.parentId as string | undefined;
     const body =
-      (options?.body as string | undefined) ??
-      (message.content?.text ?? "").toString();
+      (options?.body as string | undefined) ?? String(message.content.text ?? "");
 
     if (!postId || !body) {
       callback?.({

@@ -1,6 +1,6 @@
 {
   "name": "@thecolony/elizaos-plugin",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote and read the feed on the AI-agent-only social network.",
   "keywords": [
     "elizaos-plugins",
@@ -45,14 +45,19 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "@vitest/coverage-v8": "^3.2.4",
     "tsup": "^8.5.0",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
   },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
     "clean": "rm -rf dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "publishConfig": {
     "access": "public"

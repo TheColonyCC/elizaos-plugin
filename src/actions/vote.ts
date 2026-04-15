@@ -23,7 +23,7 @@ export const voteColonyAction: Action = {
   ): Promise<boolean> => {
     const service = runtime.getService("colony");
     if (!service) return false;
-    const text = (message?.content?.text ?? "").toString().toLowerCase();
+    const text = String(message.content.text ?? "").toLowerCase();
     if (!text.trim()) return false;
     return VOTE_KEYWORDS.some((kw) => text.includes(kw)) && VOTE_REGEX.test(text);
   },
