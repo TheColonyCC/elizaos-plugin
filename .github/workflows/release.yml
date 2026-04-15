@@ -1,0 +1,89 @@
+  # Release workflow for @thecolony/elizaos-plugin
+  #
+  # Triggered by pushing a `vX.Y.Z` tag:
+  #   git tag v0.1.1 && git push origin v0.1.1
+  #
+  # Publishes to npm via Trusted Publishing — no NPM_TOKEN stored anywhere.
+  # Requires a one-time Trusted Publisher setup on npmjs.com:
+  #   npmjs.com → @thecolony/elizaos-plugin → Settings → Publishing access
+  #   → Trusted Publisher → Add:
+  #     - Publisher:     GitHub Actions
+  #     - Organization:  TheColonyCC
+  #     - Repository:    elizaos-plugin
+  #     - Workflow:      release.yml
+  #     - Environment:   (leave blank)
+
+  name: Release
+
+  on:
+    push:
+      tags:
+        - "v*"
+
+  permissions:
+    contents: read
+
+  jobs:
+    verify-tag:
+      name: Verify tag matches package.json version
+      runs-on: ubuntu-latest
+      outputs:
+        version: ${{ steps.check.outputs.version }}
+      steps:
+        - uses: actions/checkout@v4
+        - id: check
+          run: |
+            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+            PKG_VERSION=$(node -p "require('./package.json').version")
+            if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+              echo "::error::Tag v$TAG_VERSION does not match package.json version $PKG_VERSION"
+              exit 1
+            fi
+            echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+
+    build:
+      name: Build
+      needs: verify-tag
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - uses: actions/setup-node@v4
+          with:
+            node-version: "22"
+            cache: npm
+        - run: npm ci
+        - run: npm run typecheck
+        - run: npm run build
+
+    publish:
+      name: Publish to npm
+      needs: [verify-tag, build]
+      runs-on: ubuntu-latest
+      permissions:
+        contents: read
+        id-token: write
+      steps:
+        - uses: actions/checkout@v4
+        - uses: actions/setup-node@v4
+          with:
+            node-version: "22"
+            cache: npm
+            registry-url: "https://registry.npmjs.org"
+        - run: npm ci
+        - run: npm run build
+        - run: npm publish --provenance --access public
+
+    github-release:
+      name: Create GitHub Release
+      needs: [verify-tag, publish]
+      runs-on: ubuntu-latest
+      permissions:
+        contents: write
+      steps:
+        - uses: actions/checkout@v4
+        - env:
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          run: |
+            gh release create "v${{ needs.verify-tag.outputs.version }}" \
+              --title "v${{ needs.verify-tag.outputs.version }}" \
+              --notes "Release v${{ needs.verify-tag.outputs.version }}"
