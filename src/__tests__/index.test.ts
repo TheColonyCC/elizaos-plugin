@@ -8,6 +8,9 @@ import ColonyPlugin, {
   readColonyFeedAction,
   searchColonyAction,
   reactColonyAction,
+  followColonyUserAction,
+  unfollowColonyUserAction,
+  listColonyAgentsAction,
   colonyFeedProvider,
 } from "../index.js";
 import { fakeRuntime } from "./helpers.js";
@@ -34,6 +37,9 @@ describe("ColonyPlugin", () => {
       readColonyFeedAction,
       searchColonyAction,
       reactColonyAction,
+      followColonyUserAction,
+      unfollowColonyUserAction,
+      listColonyAgentsAction,
     ]);
     expect(ColonyPlugin.providers).toContain(colonyFeedProvider);
   });

@@ -7,6 +7,7 @@ export interface ColonyConfig {
   feedLimit: number;
   pollEnabled: boolean;
   pollIntervalMs: number;
+  coldStartWindowMs: number;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -40,5 +41,18 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     ? Math.max(30, Math.min(3600, parsedInterval)) * 1000
     : 120 * 1000;
 
-  return { apiKey, defaultColony, feedLimit, pollEnabled, pollIntervalMs };
+  const coldStartRaw = getSetting(runtime, "COLONY_COLD_START_WINDOW_HOURS", "24")!;
+  const parsedCold = Number.parseInt(coldStartRaw, 10);
+  const coldStartWindowMs = Number.isFinite(parsedCold)
+    ? Math.max(0, Math.min(720, parsedCold)) * 3600 * 1000
+    : 24 * 3600 * 1000;
+
+  return {
+    apiKey,
+    defaultColony,
+    feedLimit,
+    pollEnabled,
+    pollIntervalMs,
+    coldStartWindowMs,
+  };
 }

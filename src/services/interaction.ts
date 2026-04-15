@@ -55,21 +55,28 @@ function stringToUuid(runtime: IAgentRuntime, base: string): string {
   return `${agentId}:${base}`;
 }
 
+const MAX_BACKOFF_MULTIPLIER = 16;
+
 export class ColonyInteractionClient {
   private isRunning = false;
   private pendingTimer: ReturnType<typeof setTimeout> | null = null;
+  private backoffMultiplier = 1;
+  private readonly boottimeMs = Date.now();
+  private readonly coldStartWindowMs: number;
 
   constructor(
     private readonly service: ColonyService,
     private readonly runtime: IAgentRuntime,
     private readonly pollIntervalMs: number,
-  ) {}
+  ) {
+    this.coldStartWindowMs = service.colonyConfig.coldStartWindowMs;
+  }
 
   async start(): Promise<void> {
     if (this.isRunning) return;
     this.isRunning = true;
     logger.info(
-      `🔔 Colony interaction client started (poll every ${this.pollIntervalMs}ms)`,
+      `🔔 Colony interaction client started (poll every ${this.pollIntervalMs}ms, cold-start window ${this.coldStartWindowMs}ms)`,
     );
     void this.loop();
   }
@@ -82,21 +89,72 @@ export class ColonyInteractionClient {
     }
   }
 
+  private currentInterval(): number {
+    return this.pollIntervalMs * this.backoffMultiplier;
+  }
+
+  private handleRateLimit(err: unknown): void {
+    const rlErr = err as { name?: string; retryAfter?: number };
+    const isRateLimit =
+      rlErr?.name === "ColonyRateLimitError" ||
+      (err as { constructor?: { name?: string } })?.constructor?.name ===
+        "ColonyRateLimitError";
+    if (!isRateLimit) return;
+    const previousMultiplier = this.backoffMultiplier;
+    this.backoffMultiplier = Math.min(
+      MAX_BACKOFF_MULTIPLIER,
+      this.backoffMultiplier * 2,
+    );
+    const retryAfter = typeof rlErr.retryAfter === "number" ? rlErr.retryAfter : undefined;
+    logger.warn(
+      `COLONY_INTERACTION rate-limited (${previousMultiplier}× → ${this.backoffMultiplier}×${
+        retryAfter !== undefined ? `, server suggested Retry-After ${retryAfter}s` : ""
+      })`,
+    );
+  }
+
+  private resetBackoff(): void {
+    if (this.backoffMultiplier !== 1) {
+      logger.info("COLONY_INTERACTION backoff reset");
+      this.backoffMultiplier = 1;
+    }
+  }
+
   private async loop(): Promise<void> {
     while (this.isRunning) {
+      let tickSucceeded = false;
       try {
         await this.tick();
+        tickSucceeded = true;
       } catch (err) {
+        this.handleRateLimit(err);
         logger.warn(`COLONY_INTERACTION tick failed: ${String(err)}`);
       }
+      if (tickSucceeded) {
+        this.resetBackoff();
+      }
       if (!this.isRunning) return;
+      const delay = this.currentInterval();
       await new Promise<void>((resolve) => {
         this.pendingTimer = setTimeout(() => {
           this.pendingTimer = null;
           resolve();
-        }, this.pollIntervalMs);
+        }, delay);
       });
     }
+  }
+
+  /**
+   * True when a notification's `created_at` is older than the cold-start
+   * window measured from the boot timestamp. Notifications without a
+   * parseable `created_at` are never considered cold.
+   */
+  private isColdStartNotification(createdAt?: string): boolean {
+    if (this.coldStartWindowMs <= 0) return false;
+    if (!createdAt) return false;
+    const ts = Date.parse(createdAt);
+    if (!Number.isFinite(ts)) return false;
+    return ts < this.boottimeMs - this.coldStartWindowMs;
   }
 
   private async tick(): Promise<void> {
@@ -104,6 +162,10 @@ export class ColonyInteractionClient {
     for (const notification of notifications) {
       if (!this.isRunning) return;
       if (notification.is_read) continue;
+      if (this.isColdStartNotification(notification.created_at)) {
+        await this.markRead(notification.id);
+        continue;
+      }
       await this.processNotification(notification);
     }
     if (!this.isRunning) return;

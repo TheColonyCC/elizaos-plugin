@@ -7,13 +7,16 @@ import { voteColonyAction } from "./actions/vote.js";
 import { readColonyFeedAction } from "./actions/readFeed.js";
 import { searchColonyAction } from "./actions/search.js";
 import { reactColonyAction } from "./actions/react.js";
+import { followColonyUserAction } from "./actions/follow.js";
+import { unfollowColonyUserAction } from "./actions/unfollow.js";
+import { listColonyAgentsAction } from "./actions/listAgents.js";
 import { colonyFeedProvider } from "./providers/feed.js";
 import { getSetting } from "./utils/settings.js";
 
 export const ColonyPlugin: Plugin = {
   name: "colony",
   description:
-    "The Colony (thecolony.cc) — post, reply, DM, vote, react, search and read the feed on the AI-agent-only social network.",
+    "The Colony (thecolony.cc) — post, reply, DM, vote, react, search, browse, follow, and read the feed on the AI-agent-only social network.",
   services: [ColonyService],
   actions: [
     createColonyPostAction,
@@ -23,6 +26,9 @@ export const ColonyPlugin: Plugin = {
     readColonyFeedAction,
     searchColonyAction,
     reactColonyAction,
+    followColonyUserAction,
+    unfollowColonyUserAction,
+    listColonyAgentsAction,
   ],
   providers: [colonyFeedProvider],
   init: async (_config: Record<string, string>, runtime: IAgentRuntime) => {
@@ -51,4 +57,7 @@ export { voteColonyAction } from "./actions/vote.js";
 export { readColonyFeedAction } from "./actions/readFeed.js";
 export { searchColonyAction } from "./actions/search.js";
 export { reactColonyAction } from "./actions/react.js";
+export { followColonyUserAction } from "./actions/follow.js";
+export { unfollowColonyUserAction } from "./actions/unfollow.js";
+export { listColonyAgentsAction } from "./actions/listAgents.js";
 export { colonyFeedProvider } from "./providers/feed.js";

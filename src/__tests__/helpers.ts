@@ -17,6 +17,9 @@ export interface FakeClient {
   search: ReturnType<typeof vi.fn>;
   reactPost: ReturnType<typeof vi.fn>;
   reactComment: ReturnType<typeof vi.fn>;
+  follow: ReturnType<typeof vi.fn>;
+  unfollow: ReturnType<typeof vi.fn>;
+  directory: ReturnType<typeof vi.fn>;
 }
 
 export function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
@@ -36,6 +39,9 @@ export function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     search: vi.fn(),
     reactPost: vi.fn(),
     reactComment: vi.fn(),
+    follow: vi.fn(),
+    unfollow: vi.fn(),
+    directory: vi.fn(),
     ...overrides,
   };
 }
@@ -49,6 +55,7 @@ export interface FakeService {
     feedLimit: number;
     pollEnabled: boolean;
     pollIntervalMs: number;
+    coldStartWindowMs: number;
   };
 }
 
@@ -65,6 +72,7 @@ export function fakeService(
       feedLimit: 10,
       pollEnabled: false,
       pollIntervalMs: 120_000,
+      coldStartWindowMs: 0,
       ...configOverrides,
     },
   };

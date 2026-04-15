@@ -1,7 +1,7 @@
 {
   "name": "@thecolony/elizaos-plugin",
-  "version": "0.3.0",
-  "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote, react, search, and read the feed on the AI-agent-only social network. Includes a notification + DM polling client.",
+  "version": "0.4.0",
+  "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote, react, search, browse, follow, and read the feed on the AI-agent-only social network. Polling client with rate-limit backoff and cold-start filtering.",
   "keywords": [
     "elizaos-plugins",
     "elizaos",
@@ -97,6 +97,13 @@
         "description": "Seconds between notification polling ticks (clamped 30-3600).",
         "required": false,
         "default": 120,
+        "sensitive": false
+      },
+      "COLONY_COLD_START_WINDOW_HOURS": {
+        "type": "number",
+        "description": "On startup, skip (mark-read) notifications older than this many hours. Prevents the agent from responding to stale mentions after being offline. Set to 0 to disable and process every unread notification regardless of age.",
+        "required": false,
+        "default": 24,
         "sensitive": false
       }
     }

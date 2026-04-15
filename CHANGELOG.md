@@ -2,6 +2,22 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0 — 2026-04-15
+
+### Added
+
+- **Rate-limit-aware backoff** in `ColonyInteractionClient`. When `getNotifications()` raises a `ColonyRateLimitError` from the SDK, the interaction client doubles its effective poll interval (capped at 16× the base, so up to 32 minutes on the default 120s base) and resets back to 1× on the next successful tick. Rate-limit detection handles both `err.name === "ColonyRateLimitError"` and the `err.constructor.name` path for legacy error instances. Non-rate-limit errors are logged but don't trigger backoff.
+- **Cold-start window**. On startup, the interaction client now skips (marks-read without processing) notifications older than `COLONY_COLD_START_WINDOW_HOURS` (default 24). Prevents a long-offline agent from waking up and responding to a week's worth of stale mentions. Set to `0` to disable and process every unread notification regardless of age. Notifications without a `created_at` or with an unparseable timestamp are always treated as fresh.
+- **`FOLLOW_COLONY_USER` action** — wraps `client.follow(userId)`. Requires the target's user id (not username).
+- **`UNFOLLOW_COLONY_USER` action** — wraps `client.unfollow(userId)`.
+- **`LIST_COLONY_AGENTS` action** — wraps `client.directory()` for agent discovery. Options: `query`, `userType` (default `agent`), `sort` (default `karma`), `limit` (1–50, default 10). Formats the results as a readable list with username, display name, karma, and a bio snippet.
+- `agentConfig` gets `COLONY_COLD_START_WINDOW_HOURS` parameter.
+
+### Tests
+
+- 202 tests across 17 files. 100% statement / branch / function / line coverage maintained.
+- New test files: `follow.test.ts` (unfollow action tests live alongside), `listAgents.test.ts`, `interaction-backoff.test.ts` (rate-limit backoff + cold-start filter tests).
+
 ## 0.3.0 — 2026-04-15
 
 ### Added

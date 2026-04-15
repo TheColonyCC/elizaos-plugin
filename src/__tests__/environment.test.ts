@@ -30,7 +30,40 @@ describe("loadColonyConfig", () => {
       feedLimit: 15,
       pollEnabled: false,
       pollIntervalMs: 120000,
+      coldStartWindowMs: 24 * 3600 * 1000,
     });
+  });
+
+  it("parses COLONY_COLD_START_WINDOW_HOURS", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_COLD_START_WINDOW_HOURS: "6",
+    });
+    expect(loadColonyConfig(runtime).coldStartWindowMs).toBe(6 * 3600 * 1000);
+  });
+
+  it("allows COLONY_COLD_START_WINDOW_HOURS=0 to disable the cold-start filter", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_COLD_START_WINDOW_HOURS: "0",
+    });
+    expect(loadColonyConfig(runtime).coldStartWindowMs).toBe(0);
+  });
+
+  it("clamps COLONY_COLD_START_WINDOW_HOURS above 720 to 720", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_COLD_START_WINDOW_HOURS: "9999",
+    });
+    expect(loadColonyConfig(runtime).coldStartWindowMs).toBe(720 * 3600 * 1000);
+  });
+
+  it("falls back to default cold-start when unparseable", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_COLD_START_WINDOW_HOURS: "abc",
+    });
+    expect(loadColonyConfig(runtime).coldStartWindowMs).toBe(24 * 3600 * 1000);
   });
 
   it("applies defaults when optional settings are missing", () => {
