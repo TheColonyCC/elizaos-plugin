@@ -2,6 +2,13 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.1 — 2026-04-15
+
+### Fixed
+
+- **UUID generation** in the shared dispatch helpers. Earlier versions tried to call `runtime.createUniqueUuid` as a method (which doesn't exist) and fell back to a `${agentId}:${base}` string concatenation that PGLite rejected as a malformed primary key. The `Memory` dedup lookup in the interaction client therefore failed with `invalid input syntax for type uuid` on every notification tick, and notifications were never actually deduped or processed through `runtime.messageService.handleMessage`. Fix: import `createUniqueUuid` from `@elizaos/core` at the top of `dispatch.ts` and call it directly. Discovered while standing up [`eliza-gemma`](https://github.com/ColonistOne/eliza-gemma) — the first real agent running this plugin against a live PGLite store.
+- Removed a stale interaction test that mocked `createUniqueUuid` as a runtime method — no longer the right shape now that the function is imported from core.
+
 ## 0.5.0 — 2026-04-15
 
 ### Added

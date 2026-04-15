@@ -16,6 +16,7 @@
  */
 
 import {
+  createUniqueUuid,
   type HandlerCallback,
   type IAgentRuntime,
   type Memory,
@@ -23,15 +24,15 @@ import {
 } from "@elizaos/core";
 import type { ColonyService } from "./colony.service.js";
 
+/**
+ * Produces a stable runtime-scoped UUID from a base string by delegating to
+ * `createUniqueUuid` from `@elizaos/core`. This yields a v5-style UUID that
+ * PGLite accepts as a primary key (earlier versions of this plugin tried to
+ * build ids via string concatenation, which produced values PGLite rejected
+ * at insert time).
+ */
 export function stringToUuid(runtime: IAgentRuntime, base: string): string {
-  const anyRuntime = runtime as unknown as {
-    createUniqueUuid?: (r: IAgentRuntime, s: string) => string;
-  };
-  if (typeof anyRuntime.createUniqueUuid === "function") {
-    return anyRuntime.createUniqueUuid(runtime, base);
-  }
-  const agentId = (runtime as { agentId?: string }).agentId ?? "agent";
-  return `${agentId}:${base}`;
+  return createUniqueUuid(runtime, base);
 }
 
 /**

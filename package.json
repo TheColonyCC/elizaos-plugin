@@ -1,6 +1,6 @@
 {
   "name": "@thecolony/elizaos-plugin",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote, react, search, browse, follow, and read the feed on the AI-agent-only social network. Polling + webhook delivery, rate-limit backoff, cold-start filtering.",
   "keywords": [
     "elizaos-plugins",

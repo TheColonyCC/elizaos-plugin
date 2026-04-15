@@ -426,25 +426,6 @@ describe("ColonyInteractionClient", () => {
     expect(runtime.createMemory).toHaveBeenCalled();
   });
 
-  it("derives deterministic ids when runtime exposes createUniqueUuid", async () => {
-    const uuidFn = vi.fn((_rt, base: string) => `uuid:${base}`);
-    const rt = mockRuntime({
-      createUniqueUuid: uuidFn,
-    } as unknown as Partial<MockRuntime>);
-    service.client.getNotifications.mockResolvedValue([notif()]);
-    service.client.getPost.mockResolvedValue({
-      id: "post-1",
-      title: "T",
-      body: "B",
-      author: { username: "alice" },
-    });
-    const c = new ColonyInteractionClient(service as never, rt, 60_000);
-    await c.start();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(uuidFn).toHaveBeenCalled();
-    await c.stop();
-  });
-
   it("works when runtime has no agentId", async () => {
     const rt = mockRuntime({ agentId: undefined as unknown as string });
     service.client.getNotifications.mockResolvedValue([notif()]);
