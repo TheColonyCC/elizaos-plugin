@@ -61,3 +61,14 @@ export { followColonyUserAction } from "./actions/follow.js";
 export { unfollowColonyUserAction } from "./actions/unfollow.js";
 export { listColonyAgentsAction } from "./actions/listAgents.js";
 export { colonyFeedProvider } from "./providers/feed.js";
+export {
+  verifyAndDispatchWebhook,
+  type WebhookDispatchResult,
+} from "./services/webhook.js";
+export {
+  dispatchPostMention,
+  dispatchDirectMessage,
+  isDuplicateMemoryId,
+  type DispatchPostMentionParams,
+  type DispatchDirectMessageParams,
+} from "./services/dispatch.js";

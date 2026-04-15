@@ -1,10 +1,10 @@
-import {
-  type HandlerCallback,
-  type IAgentRuntime,
-  type Memory,
-  logger,
-} from "@elizaos/core";
+import { type IAgentRuntime, logger } from "@elizaos/core";
 import type { ColonyService } from "./colony.service.js";
+import {
+  dispatchDirectMessage,
+  dispatchPostMention,
+  isDuplicateMemoryId,
+} from "./dispatch.js";
 
 type Notification = {
   id: string;
@@ -43,17 +43,6 @@ type ConversationDetail = {
   other_user?: { username?: string };
   messages?: ConversationMessage[];
 };
-
-function stringToUuid(runtime: IAgentRuntime, base: string): string {
-  const anyRuntime = runtime as unknown as {
-    createUniqueUuid?: (r: IAgentRuntime, s: string) => string;
-  };
-  if (typeof anyRuntime.createUniqueUuid === "function") {
-    return anyRuntime.createUniqueUuid(runtime, base);
-  }
-  const agentId = (runtime as { agentId?: string }).agentId ?? "agent";
-  return `${agentId}:${base}`;
-}
 
 const MAX_BACKOFF_MULTIPLIER = 16;
 
@@ -211,128 +200,17 @@ export class ColonyInteractionClient {
     if (latest.sender?.username === undefined) return;
     if (latest.sender.username === this.agentUsername()) return;
 
-    const memoryId = stringToUuid(this.runtime, `colony-dm-${latest.id}`);
-    const runtime = this.runtime as unknown as {
-      getMemoryById?: (id: string) => Promise<Memory | null>;
-      ensureWorldExists?: (w: Record<string, unknown>) => Promise<void>;
-      ensureConnection?: (c: Record<string, unknown>) => Promise<void>;
-      ensureRoomExists?: (r: Record<string, unknown>) => Promise<void>;
-      createMemory?: (m: Memory, table: string) => Promise<void>;
-      messageService?: {
-        handleMessage: (
-          runtime: IAgentRuntime,
-          message: Memory,
-          callback?: HandlerCallback,
-        ) => Promise<unknown>;
-      } | null;
-      agentId?: string;
-    };
+    const dmMemoryIdKey = `colony-dm-${latest.id}`;
+    if (await isDuplicateMemoryId(this.runtime, dmMemoryIdKey)) return;
 
-    if (typeof runtime.getMemoryById === "function") {
-      const existing = await runtime.getMemoryById(memoryId);
-      if (existing) return;
-    }
-
-    const roomId = stringToUuid(this.runtime, `colony-dm-${username}`);
-    const entityId = stringToUuid(this.runtime, `colony-user-${username}`);
-    const worldId = stringToUuid(this.runtime, "colony-world");
-    const agentId = runtime.agentId ?? "agent";
-
-    if (typeof runtime.ensureWorldExists === "function") {
-      await runtime.ensureWorldExists({
-        id: worldId,
-        name: "The Colony",
-        agentId,
-        serverId: "thecolony.cc",
-      });
-    }
-    if (typeof runtime.ensureConnection === "function") {
-      await runtime.ensureConnection({
-        entityId,
-        roomId,
-        userName: username,
-        name: username,
-        source: "colony",
-        type: "DM",
-        worldId,
-      });
-    }
-    if (typeof runtime.ensureRoomExists === "function") {
-      await runtime.ensureRoomExists({
-        id: roomId,
-        name: `DM with @${username}`,
-        source: "colony",
-        type: "DM",
-        channelId: detail.id,
-        serverId: "thecolony.cc",
-        worldId,
-      });
-    }
-
-    const memory: Memory = {
-      id: memoryId as Memory["id"],
-      entityId: entityId as Memory["entityId"],
-      agentId: agentId as Memory["agentId"],
-      roomId: roomId as Memory["roomId"],
-      worldId: worldId as Memory["worldId"],
-      content: {
-        text: latest.body ?? "",
-        source: "colony",
-        channelType: "DM" as never,
-      },
-      createdAt: latest.created_at
-        ? Date.parse(latest.created_at) || Date.now()
-        : Date.now(),
-    };
-
-    if (typeof runtime.createMemory === "function") {
-      await runtime.createMemory(memory, "messages");
-    }
-
-    const callback: HandlerCallback = async (response) => {
-      const replyText = String(response?.text ?? "").trim();
-      if (!replyText) return [];
-      try {
-        const sent = (await (this.service.client as unknown as {
-          sendMessage: (u: string, b: string) => Promise<{ id?: string }>;
-        }).sendMessage(username, replyText)) as { id?: string };
-        const responseMemory: Memory = {
-          id: stringToUuid(
-            this.runtime,
-            `colony-dm-reply-${sent.id ?? username}`,
-          ) as Memory["id"],
-          entityId: agentId as Memory["entityId"],
-          agentId: agentId as Memory["agentId"],
-          roomId: roomId as Memory["roomId"],
-          content: {
-            text: replyText,
-            source: "colony",
-            inReplyTo: memoryId as Memory["content"]["inReplyTo"],
-            channelType: "DM" as never,
-          },
-          createdAt: Date.now(),
-        };
-        if (typeof runtime.createMemory === "function") {
-          await runtime.createMemory(responseMemory, "messages");
-        }
-        return [responseMemory];
-      } catch (err) {
-        logger.error(
-          `COLONY_INTERACTION: failed to send DM reply to @${username}: ${String(err)}`,
-        );
-        return [];
-      }
-    };
-
-    if (runtime.messageService && typeof runtime.messageService.handleMessage === "function") {
-      try {
-        await runtime.messageService.handleMessage(this.runtime, memory, callback);
-      } catch (err) {
-        logger.warn(
-          `COLONY_INTERACTION: handleMessage threw on DM: ${String(err)}`,
-        );
-      }
-    }
+    await dispatchDirectMessage(this.service, this.runtime, {
+      memoryIdKey: dmMemoryIdKey,
+      senderUsername: username,
+      messageId: latest.id,
+      body: latest.body ?? "",
+      conversationId: detail.id,
+      createdAt: latest.created_at,
+    });
   }
 
   private agentUsername(): string | undefined {
@@ -340,29 +218,10 @@ export class ColonyInteractionClient {
   }
 
   private async processNotification(notification: Notification): Promise<void> {
-    const memoryId = stringToUuid(this.runtime, `colony-notif-${notification.id}`);
-    const runtime = this.runtime as unknown as {
-      getMemoryById?: (id: string) => Promise<Memory | null>;
-      ensureWorldExists?: (w: Record<string, unknown>) => Promise<void>;
-      ensureConnection?: (c: Record<string, unknown>) => Promise<void>;
-      ensureRoomExists?: (r: Record<string, unknown>) => Promise<void>;
-      createMemory?: (m: Memory, table: string) => Promise<void>;
-      messageService?: {
-        handleMessage: (
-          runtime: IAgentRuntime,
-          message: Memory,
-          callback?: HandlerCallback,
-        ) => Promise<unknown>;
-      } | null;
-      agentId?: string;
-    };
-
-    if (typeof runtime.getMemoryById === "function") {
-      const existing = await runtime.getMemoryById(memoryId);
-      if (existing) {
-        await this.markRead(notification.id);
-        return;
-      }
+    const memoryIdKey = `colony-notif-${notification.id}`;
+    if (await isDuplicateMemoryId(this.runtime, memoryIdKey)) {
+      await this.markRead(notification.id);
+      return;
     }
 
     if (!notification.post_id) {
@@ -382,108 +241,14 @@ export class ColonyInteractionClient {
       return;
     }
 
-    const postTitle = post.title ?? "";
-    const postBody = post.body ?? "";
-    const authorUsername = post.author?.username ?? "unknown";
-
-    const roomId = stringToUuid(this.runtime, `colony-post-${notification.post_id}`);
-    const entityId = stringToUuid(this.runtime, `colony-user-${authorUsername}`);
-    const worldId = stringToUuid(this.runtime, "colony-world");
-    const agentId = runtime.agentId ?? "agent";
-
-    if (typeof runtime.ensureWorldExists === "function") {
-      await runtime.ensureWorldExists({
-        id: worldId,
-        name: "The Colony",
-        agentId,
-        serverId: "thecolony.cc",
-      });
-    }
-    if (typeof runtime.ensureConnection === "function") {
-      await runtime.ensureConnection({
-        entityId,
-        roomId,
-        userName: authorUsername,
-        name: authorUsername,
-        source: "colony",
-        type: "FEED",
-        worldId,
-      });
-    }
-    if (typeof runtime.ensureRoomExists === "function") {
-      await runtime.ensureRoomExists({
-        id: roomId,
-        name: postTitle || "Colony post",
-        source: "colony",
-        type: "FEED",
-        channelId: notification.post_id,
-        serverId: "thecolony.cc",
-        worldId,
-      });
-    }
-
-    const memory: Memory = {
-      id: memoryId as Memory["id"],
-      entityId: entityId as Memory["entityId"],
-      agentId: agentId as Memory["agentId"],
-      roomId: roomId as Memory["roomId"],
-      worldId: worldId as Memory["worldId"],
-      content: {
-        text: [postTitle, postBody].filter(Boolean).join("\n\n"),
-        source: "colony",
-        url: `https://thecolony.cc/post/${notification.post_id}`,
-      },
-      createdAt: notification.created_at
-        ? Date.parse(notification.created_at) || Date.now()
-        : Date.now(),
-    };
-
-    if (typeof runtime.createMemory === "function") {
-      await runtime.createMemory(memory, "messages");
-    }
-
-    const postId = notification.post_id;
-    const callback: HandlerCallback = async (response) => {
-      const replyText = String(response?.text ?? "").trim();
-      if (!replyText) return [];
-      try {
-        const comment = (await this.service.client.createComment(
-          postId,
-          replyText,
-        )) as { id?: string };
-        const responseMemory: Memory = {
-          id: stringToUuid(this.runtime, `colony-comment-${comment.id ?? postId}`) as Memory["id"],
-          entityId: agentId as Memory["entityId"],
-          agentId: agentId as Memory["agentId"],
-          roomId: roomId as Memory["roomId"],
-          content: {
-            text: replyText,
-            source: "colony",
-            inReplyTo: memoryId as Memory["content"]["inReplyTo"],
-          },
-          createdAt: Date.now(),
-        };
-        if (typeof runtime.createMemory === "function") {
-          await runtime.createMemory(responseMemory, "messages");
-        }
-        return [responseMemory];
-      } catch (err) {
-        logger.error(
-          `COLONY_INTERACTION: failed to post reply on ${postId}: ${String(err)}`,
-        );
-        return [];
-      }
-    };
-
-    if (runtime.messageService && typeof runtime.messageService.handleMessage === "function") {
-      try {
-        await runtime.messageService.handleMessage(this.runtime, memory, callback);
-      } catch (err) {
-        logger.warn(
-          `COLONY_INTERACTION: handleMessage threw: ${String(err)}`,
-        );
-      }
-    }
+    await dispatchPostMention(this.service, this.runtime, {
+      memoryIdKey,
+      postId: notification.post_id,
+      postTitle: post.title ?? "",
+      postBody: post.body ?? "",
+      authorUsername: post.author?.username ?? "unknown",
+      createdAt: notification.created_at,
+    });
 
     await this.markRead(notification.id);
   }

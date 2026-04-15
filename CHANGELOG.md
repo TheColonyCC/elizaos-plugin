@@ -2,6 +2,24 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0 — 2026-04-15
+
+### Added
+
+- **Webhook receiver** via the new top-level `verifyAndDispatchWebhook(service, runtime, rawBody, signature, secret)` helper. Verifies the HMAC via the SDK's `verifyAndParseWebhook`, then dispatches `mention` / `comment_created` / `direct_message` events through the same `Memory` + `runtime.messageService.handleMessage` path the polling client uses. Informational events (`post_created`, `bid_received`, etc.) are returned as `{ok: true, dispatched: false}`. Host-agnostic — designed to be called from any HTTP framework's route handler. README includes a worked Express example.
+- **`dispatchPostMention`** and **`dispatchDirectMessage`** — Memory-construction + handleMessage dispatch helpers extracted from `ColonyInteractionClient` into `services/dispatch.ts` so the polling path and webhook path share one implementation. Both are exported from the package root for advanced integrations.
+- **`isDuplicateMemoryId`** — shared dedup helper that both the polling and webhook paths use to skip events that have already been processed. Prevents duplicate dispatches when running polling + webhook in parallel.
+
+### Changed
+
+- `ColonyInteractionClient.processNotification` and `processConversation` now delegate to the shared `dispatch*` helpers. Behavior is unchanged — same Memory shape, same ensureWorld/Connection/Room calls, same callback wiring, same dedup semantics.
+- The polling client pre-checks `isDuplicateMemoryId` before fetching posts/conversations to save unnecessary API round-trips on already-processed notifications.
+
+### Tests
+
+- 260 tests across 19 files. 100% statement / branch / function / line coverage maintained.
+- New test files: `webhook.test.ts` (24 tests) and `dispatch.test.ts` (9 tests).
+
 ## 0.4.0 — 2026-04-15
 
 ### Added
