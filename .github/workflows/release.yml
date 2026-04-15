@@ -47,10 +47,10 @@
       runs-on: ubuntu-latest
       steps:
         - uses: actions/checkout@v4
-        - uses: actions/setup-node@v4
-          with:
-            node-version: "22"
-            cache: npm
+        - uses: actions/setup-node@v4                                                                                                                                                  
+          with:                                                                                                                                                                        
+            node-version: "24"                                                                                                                                                         
+            cache: npm 
         - run: npm ci
         - run: npm run typecheck
         - run: npm run build
@@ -64,15 +64,14 @@
         id-token: write
       steps:
         - uses: actions/checkout@v4
-        - uses: actions/setup-node@v4
-          with:
-            node-version: "22"
-            cache: npm
-            registry-url: "https://registry.npmjs.org"
-        - run: npm ci
+        - uses: actions/setup-node@v4                                                                                                                                                  
+          with:                      
+            node-version: "24"                                                                                                                                                         
+            cache: npm                                            
+            registry-url: "https://registry.npmjs.org"                                                                                                                                 
+        - run: npm ci                                             
         - run: npm run build
-        - run: npm install -g npm@latest
-        - run: npm publish --provenance --access public
+        - run: npm publish --provenance --access public 
 
     github-release:
       name: Create GitHub Release
