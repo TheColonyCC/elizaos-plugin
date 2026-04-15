@@ -31,12 +31,20 @@ describe("loadColonyConfig", () => {
       pollEnabled: false,
       pollIntervalMs: 120000,
       coldStartWindowMs: 24 * 3600 * 1000,
+      notificationTypesIgnore: new Set(["vote", "follow", "award", "tip_received"]),
       postEnabled: false,
       postIntervalMinMs: 5_400_000,
       postIntervalMaxMs: 10_800_000,
       postColony: "findings",
       postMaxTokens: 280,
       postTemperature: 0.9,
+      engageEnabled: false,
+      engageIntervalMinMs: 1_800_000,
+      engageIntervalMaxMs: 3_600_000,
+      engageColonies: ["findings"],
+      engageCandidateLimit: 5,
+      engageMaxTokens: 240,
+      engageTemperature: 0.8,
     });
   });
 
@@ -113,6 +121,87 @@ describe("loadColonyConfig", () => {
       COLONY_POST_TEMPERATURE: "abc",
     });
     expect(loadColonyConfig(runtime).postTemperature).toBe(0.9);
+  });
+
+  it("parses COLONY_NOTIFICATION_TYPES_IGNORE into a normalized Set", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_NOTIFICATION_TYPES_IGNORE: "Vote, FOLLOW , award, ",
+    });
+    const config = loadColonyConfig(runtime);
+    expect(config.notificationTypesIgnore).toEqual(new Set(["vote", "follow", "award"]));
+  });
+
+  it("allows an empty COLONY_NOTIFICATION_TYPES_IGNORE to disable the filter", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_NOTIFICATION_TYPES_IGNORE: "",
+    });
+    expect(loadColonyConfig(runtime).notificationTypesIgnore.size).toBe(0);
+  });
+
+  it("parses COLONY_ENGAGE_* vars", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_ENGAGE_ENABLED: "true",
+      COLONY_ENGAGE_INTERVAL_MIN_SEC: "300",
+      COLONY_ENGAGE_INTERVAL_MAX_SEC: "900",
+      COLONY_ENGAGE_COLONIES: " findings , general ",
+      COLONY_ENGAGE_CANDIDATE_LIMIT: "8",
+      COLONY_ENGAGE_MAX_TOKENS: "500",
+      COLONY_ENGAGE_TEMPERATURE: "0.7",
+    });
+    const config = loadColonyConfig(runtime);
+    expect(config.engageEnabled).toBe(true);
+    expect(config.engageIntervalMinMs).toBe(300_000);
+    expect(config.engageIntervalMaxMs).toBe(900_000);
+    expect(config.engageColonies).toEqual(["findings", "general"]);
+    expect(config.engageCandidateLimit).toBe(8);
+    expect(config.engageMaxTokens).toBe(500);
+    expect(config.engageTemperature).toBe(0.7);
+  });
+
+  it("clamps engage candidate limit above 20 to 20", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_ENGAGE_CANDIDATE_LIMIT: "9999",
+    });
+    expect(loadColonyConfig(runtime).engageCandidateLimit).toBe(20);
+  });
+
+  it("falls back engage candidate limit on unparseable", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_ENGAGE_CANDIDATE_LIMIT: "abc",
+    });
+    expect(loadColonyConfig(runtime).engageCandidateLimit).toBe(5);
+  });
+
+  it("falls back engage interval min/max on unparseable", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_ENGAGE_INTERVAL_MIN_SEC: "abc",
+      COLONY_ENGAGE_INTERVAL_MAX_SEC: "xyz",
+    });
+    const config = loadColonyConfig(runtime);
+    expect(config.engageIntervalMinMs).toBe(1_800_000);
+    expect(config.engageIntervalMaxMs).toBe(3_600_000);
+  });
+
+  it("falls back engage max tokens on unparseable", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_ENGAGE_MAX_TOKENS: "abc",
+    });
+    expect(loadColonyConfig(runtime).engageMaxTokens).toBe(240);
+  });
+
+  it("falls back engage temperature on unparseable", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_ENGAGE_TEMPERATURE: "abc",
+    });
+    expect(loadColonyConfig(runtime).engageTemperature).toBe(0.8);
   });
 
   it("parses COLONY_COLD_START_WINDOW_HOURS", () => {

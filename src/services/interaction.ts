@@ -147,11 +147,17 @@ export class ColonyInteractionClient {
   }
 
   private async tick(): Promise<void> {
+    const ignoreTypes = this.service.colonyConfig.notificationTypesIgnore;
     const notifications = (await this.service.client.getNotifications()) as unknown as Notification[];
     for (const notification of notifications) {
       if (!this.isRunning) return;
       if (notification.is_read) continue;
       if (this.isColdStartNotification(notification.created_at)) {
+        await this.markRead(notification.id);
+        continue;
+      }
+      const typeKey = (notification.notification_type ?? "").toLowerCase();
+      if (ignoreTypes.has(typeKey)) {
         await this.markRead(notification.id);
         continue;
       }

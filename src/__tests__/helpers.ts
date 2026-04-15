@@ -56,6 +56,20 @@ export interface FakeService {
     pollEnabled: boolean;
     pollIntervalMs: number;
     coldStartWindowMs: number;
+    notificationTypesIgnore: Set<string>;
+    postEnabled: boolean;
+    postIntervalMinMs: number;
+    postIntervalMaxMs: number;
+    postColony: string;
+    postMaxTokens: number;
+    postTemperature: number;
+    engageEnabled: boolean;
+    engageIntervalMinMs: number;
+    engageIntervalMaxMs: number;
+    engageColonies: string[];
+    engageCandidateLimit: number;
+    engageMaxTokens: number;
+    engageTemperature: number;
   };
 }
 
@@ -73,6 +87,20 @@ export function fakeService(
       pollEnabled: false,
       pollIntervalMs: 120_000,
       coldStartWindowMs: 0,
+      notificationTypesIgnore: new Set<string>(),
+      postEnabled: false,
+      postIntervalMinMs: 5_400_000,
+      postIntervalMaxMs: 10_800_000,
+      postColony: "general",
+      postMaxTokens: 280,
+      postTemperature: 0.9,
+      engageEnabled: false,
+      engageIntervalMinMs: 1_800_000,
+      engageIntervalMaxMs: 3_600_000,
+      engageColonies: ["general"],
+      engageCandidateLimit: 5,
+      engageMaxTokens: 240,
+      engageTemperature: 0.8,
       ...configOverrides,
     },
   };

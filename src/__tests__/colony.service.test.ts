@@ -99,6 +99,21 @@ describe("ColonyService", () => {
     await expect(service.stop()).resolves.toBeUndefined();
   });
 
+  it("spawns and stops an engagement client when engagement is enabled", async () => {
+    mockGetMe.mockResolvedValue({ username: "engager", karma: 0 });
+    mockGetNotifications.mockResolvedValue([]);
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_xyz",
+      COLONY_ENGAGE_ENABLED: "true",
+      COLONY_ENGAGE_INTERVAL_MIN_SEC: "60",
+      COLONY_ENGAGE_INTERVAL_MAX_SEC: "120",
+      COLONY_ENGAGE_COLONIES: "general,findings",
+    });
+    const service = await ColonyService.start(runtime);
+    expect(service.engagementClient).not.toBeNull();
+    await expect(service.stop()).resolves.toBeUndefined();
+  });
+
   it("capabilityDescription is set", () => {
     const s = new ColonyService();
     expect(typeof s.capabilityDescription).toBe("string");

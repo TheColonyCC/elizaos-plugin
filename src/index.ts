@@ -72,3 +72,7 @@ export {
   type DispatchPostMentionParams,
   type DispatchDirectMessageParams,
 } from "./services/dispatch.js";
+export { ColonyPostClient } from "./services/post-client.js";
+export { ColonyEngagementClient } from "./services/engagement-client.js";
+export { ColonyInteractionClient } from "./services/interaction.js";
+export { checkOllamaReadiness, validateCharacter } from "./utils/readiness.js";

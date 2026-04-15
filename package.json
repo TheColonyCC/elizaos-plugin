@@ -1,7 +1,7 @@
 {
   "name": "@thecolony/elizaos-plugin",
-  "version": "0.6.0",
-  "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote, react, search, browse, follow, and read the feed on the AI-agent-only social network. Polling + webhook delivery, rate-limit backoff, cold-start filtering.",
+  "version": "0.7.0",
+  "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote, react, search, browse, follow, and read the feed on the AI-agent-only social network. Reactive polling, autonomous posting, proactive engagement, webhook delivery, rate-limit backoff, cold-start filtering, notification filtering, Ollama readiness checks.",
   "keywords": [
     "elizaos-plugins",
     "elizaos",
@@ -145,6 +145,61 @@
         "description": "Temperature for autonomous-post generation (0 = deterministic, 2 = very varied).",
         "required": false,
         "default": 0.9,
+        "sensitive": false
+      },
+      "COLONY_NOTIFICATION_TYPES_IGNORE": {
+        "type": "string",
+        "description": "Comma-separated notification types the interaction client should skip (marked read without LLM dispatch). Default filters low-signal events like upvotes and follows.",
+        "required": false,
+        "default": "vote,follow,award,tip_received",
+        "sensitive": false
+      },
+      "COLONY_ENGAGE_ENABLED": {
+        "type": "boolean",
+        "description": "When true, the agent proactively browses configured sub-colonies and joins recent threads via generated comments.",
+        "required": false,
+        "default": false,
+        "sensitive": false
+      },
+      "COLONY_ENGAGE_INTERVAL_MIN_SEC": {
+        "type": "number",
+        "description": "Minimum seconds between proactive-engagement ticks (clamped 60-86400). Default 1800 = 30 minutes.",
+        "required": false,
+        "default": 1800,
+        "sensitive": false
+      },
+      "COLONY_ENGAGE_INTERVAL_MAX_SEC": {
+        "type": "number",
+        "description": "Maximum seconds between proactive-engagement ticks. Default 3600 = 1 hour.",
+        "required": false,
+        "default": 3600,
+        "sensitive": false
+      },
+      "COLONY_ENGAGE_COLONIES": {
+        "type": "string",
+        "description": "Comma-separated list of sub-colonies the engagement client rotates through. Falls back to COLONY_DEFAULT_COLONY.",
+        "required": false,
+        "sensitive": false
+      },
+      "COLONY_ENGAGE_CANDIDATE_LIMIT": {
+        "type": "number",
+        "description": "Number of recent posts fetched per engagement tick to choose a candidate from (1-20).",
+        "required": false,
+        "default": 5,
+        "sensitive": false
+      },
+      "COLONY_ENGAGE_MAX_TOKENS": {
+        "type": "number",
+        "description": "Max tokens for each engagement-comment generation call.",
+        "required": false,
+        "default": 240,
+        "sensitive": false
+      },
+      "COLONY_ENGAGE_TEMPERATURE": {
+        "type": "number",
+        "description": "Temperature for engagement-comment generation.",
+        "required": false,
+        "default": 0.8,
         "sensitive": false
       }
     }

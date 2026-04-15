@@ -8,12 +8,20 @@ export interface ColonyConfig {
   pollEnabled: boolean;
   pollIntervalMs: number;
   coldStartWindowMs: number;
+  notificationTypesIgnore: Set<string>;
   postEnabled: boolean;
   postIntervalMinMs: number;
   postIntervalMaxMs: number;
   postColony: string;
   postMaxTokens: number;
   postTemperature: number;
+  engageEnabled: boolean;
+  engageIntervalMinMs: number;
+  engageIntervalMaxMs: number;
+  engageColonies: string[];
+  engageCandidateLimit: number;
+  engageMaxTokens: number;
+  engageTemperature: number;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -82,6 +90,61 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     ? Math.max(0, Math.min(2, parsedPostTemp))
     : 0.9;
 
+  const ignoreRaw = getSetting(runtime, "COLONY_NOTIFICATION_TYPES_IGNORE", "vote,follow,award,tip_received")!;
+  const notificationTypesIgnore = new Set(
+    ignoreRaw
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+
+  const engageRaw = getSetting(runtime, "COLONY_ENGAGE_ENABLED", "false")!.toLowerCase();
+  const engageEnabled = engageRaw === "true" || engageRaw === "1" || engageRaw === "yes";
+
+  const engageMinRaw = getSetting(runtime, "COLONY_ENGAGE_INTERVAL_MIN_SEC", "1800")!;
+  const parsedEngageMin = Number.parseInt(engageMinRaw, 10);
+  const engageIntervalMinMs = Number.isFinite(parsedEngageMin)
+    ? Math.max(60, Math.min(86_400, parsedEngageMin)) * 1000
+    : 1800 * 1000;
+
+  const engageMaxRaw = getSetting(runtime, "COLONY_ENGAGE_INTERVAL_MAX_SEC", "3600")!;
+  const parsedEngageMax = Number.parseInt(engageMaxRaw, 10);
+  const engageIntervalMaxMs = Number.isFinite(parsedEngageMax)
+    ? Math.max(engageIntervalMinMs / 1000, Math.min(86_400, parsedEngageMax)) * 1000
+    : 3600 * 1000;
+
+  const engageColoniesRaw = getSetting(
+    runtime,
+    "COLONY_ENGAGE_COLONIES",
+    defaultColony,
+  )!;
+  const engageColonies = engageColoniesRaw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const engageCandidateLimitRaw = getSetting(
+    runtime,
+    "COLONY_ENGAGE_CANDIDATE_LIMIT",
+    "5",
+  )!;
+  const parsedEngageLimit = Number.parseInt(engageCandidateLimitRaw, 10);
+  const engageCandidateLimit = Number.isFinite(parsedEngageLimit)
+    ? Math.max(1, Math.min(20, parsedEngageLimit))
+    : 5;
+
+  const engageMaxTokensRaw = getSetting(runtime, "COLONY_ENGAGE_MAX_TOKENS", "240")!;
+  const parsedEngageMaxTokens = Number.parseInt(engageMaxTokensRaw, 10);
+  const engageMaxTokens = Number.isFinite(parsedEngageMaxTokens)
+    ? Math.max(32, Math.min(2000, parsedEngageMaxTokens))
+    : 240;
+
+  const engageTempRaw = getSetting(runtime, "COLONY_ENGAGE_TEMPERATURE", "0.8")!;
+  const parsedEngageTemp = Number.parseFloat(engageTempRaw);
+  const engageTemperature = Number.isFinite(parsedEngageTemp)
+    ? Math.max(0, Math.min(2, parsedEngageTemp))
+    : 0.8;
+
   return {
     apiKey,
     defaultColony,
@@ -89,11 +152,19 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     pollEnabled,
     pollIntervalMs,
     coldStartWindowMs,
+    notificationTypesIgnore,
     postEnabled,
     postIntervalMinMs,
     postIntervalMaxMs,
     postColony,
     postMaxTokens,
     postTemperature,
+    engageEnabled,
+    engageIntervalMinMs,
+    engageIntervalMaxMs,
+    engageColonies,
+    engageCandidateLimit,
+    engageMaxTokens,
+    engageTemperature,
   };
 }

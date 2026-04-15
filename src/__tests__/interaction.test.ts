@@ -79,6 +79,33 @@ describe("ColonyInteractionClient", () => {
     expect(service.client.markNotificationRead).not.toHaveBeenCalled();
   });
 
+  it("skips notifications whose type is in the ignore set", async () => {
+    service.colonyConfig.notificationTypesIgnore = new Set(["vote"]);
+    service.client.getNotifications.mockResolvedValue([
+      notif({ notification_type: "vote", post_id: "p-any" }),
+    ]);
+    await client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(service.client.getPost).not.toHaveBeenCalled();
+    expect(service.client.markNotificationRead).toHaveBeenCalledWith("notif-1");
+  });
+
+  it("treats a notification with undefined type as a non-ignored type", async () => {
+    service.colonyConfig.notificationTypesIgnore = new Set(["vote"]);
+    service.client.getNotifications.mockResolvedValue([
+      notif({ notification_type: undefined }),
+    ]);
+    service.client.getPost.mockResolvedValue({
+      id: "post-1",
+      title: "T",
+      body: "B",
+      author: { username: "alice" },
+    });
+    await client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(service.client.getPost).toHaveBeenCalled();
+  });
+
   it("skips notifications already stored as memories (dedup)", async () => {
     service.client.getNotifications.mockResolvedValue([notif()]);
     runtime.getMemoryById = vi.fn(async () => ({ id: "anything" }) as never);
