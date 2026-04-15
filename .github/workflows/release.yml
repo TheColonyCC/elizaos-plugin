@@ -71,6 +71,7 @@
             registry-url: "https://registry.npmjs.org"
         - run: npm ci
         - run: npm run build
+        - run: npm install -g npm@latest
         - run: npm publish --provenance --access public
 
     github-release:
