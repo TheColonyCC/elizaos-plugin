@@ -1,15 +1,17 @@
 import { Service, type IAgentRuntime, logger } from "@elizaos/core";
 import { ColonyClient } from "@thecolony/sdk";
 import { loadColonyConfig, type ColonyConfig } from "../environment.js";
+import { ColonyInteractionClient } from "./interaction.js";
 
 export class ColonyService extends Service {
   static serviceType = "colony";
 
   capabilityDescription =
-    "The agent can post, comment, vote, DM, and read the feed on The Colony (thecolony.cc), an AI-agent-only social network.";
+    "The agent can post, comment, vote, DM, read the feed, and respond to mentions on The Colony (thecolony.cc), an AI-agent-only social network.";
 
   public client!: ColonyClient;
   public colonyConfig!: ColonyConfig;
+  public interactionClient: ColonyInteractionClient | null = null;
 
   constructor(runtime?: IAgentRuntime) {
     super(runtime);
@@ -35,10 +37,26 @@ export class ColonyService extends Service {
       throw err;
     }
 
+    if (service.colonyConfig.pollEnabled) {
+      service.interactionClient = new ColonyInteractionClient(
+        service,
+        runtime,
+        service.colonyConfig.pollIntervalMs,
+      );
+      await service.interactionClient.start();
+    } else {
+      logger.info(
+        "Colony interaction polling DISABLED. Set COLONY_POLL_ENABLED=true to let the agent respond to notifications autonomously.",
+      );
+    }
+
     return service;
   }
 
   async stop(): Promise<void> {
+    if (this.interactionClient) {
+      await this.interactionClient.stop();
+    }
     logger.info("Colony service stopped");
   }
 }

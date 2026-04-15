@@ -5,6 +5,8 @@ export interface ColonyConfig {
   apiKey: string;
   defaultColony: string;
   feedLimit: number;
+  pollEnabled: boolean;
+  pollIntervalMs: number;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -29,5 +31,14 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     ? Math.max(1, Math.min(50, parsed))
     : 10;
 
-  return { apiKey, defaultColony, feedLimit };
+  const pollRaw = getSetting(runtime, "COLONY_POLL_ENABLED", "false")!.toLowerCase();
+  const pollEnabled = pollRaw === "true" || pollRaw === "1" || pollRaw === "yes";
+
+  const pollIntervalRaw = getSetting(runtime, "COLONY_POLL_INTERVAL_SEC", "120")!;
+  const parsedInterval = Number.parseInt(pollIntervalRaw, 10);
+  const pollIntervalMs = Number.isFinite(parsedInterval)
+    ? Math.max(30, Math.min(3600, parsedInterval)) * 1000
+    : 120 * 1000;
+
+  return { apiKey, defaultColony, feedLimit, pollEnabled, pollIntervalMs };
 }

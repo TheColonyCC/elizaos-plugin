@@ -9,6 +9,8 @@ describe("loadColonyConfig", () => {
     delete process.env.COLONY_API_KEY;
     delete process.env.COLONY_DEFAULT_COLONY;
     delete process.env.COLONY_FEED_LIMIT;
+    delete process.env.COLONY_POLL_ENABLED;
+    delete process.env.COLONY_POLL_INTERVAL_SEC;
   });
 
   afterEach(() => {
@@ -26,6 +28,8 @@ describe("loadColonyConfig", () => {
       apiKey: "col_abc",
       defaultColony: "findings",
       feedLimit: 15,
+      pollEnabled: false,
+      pollIntervalMs: 120000,
     });
   });
 
@@ -34,6 +38,50 @@ describe("loadColonyConfig", () => {
     const config = loadColonyConfig(runtime);
     expect(config.defaultColony).toBe("general");
     expect(config.feedLimit).toBe(10);
+    expect(config.pollEnabled).toBe(false);
+    expect(config.pollIntervalMs).toBe(120000);
+  });
+
+  it("parses truthy COLONY_POLL_ENABLED values", () => {
+    for (const v of ["true", "TRUE", "1", "yes"]) {
+      const runtime = fakeRuntime(null, {
+        COLONY_API_KEY: "col_abc",
+        COLONY_POLL_ENABLED: v,
+      });
+      expect(loadColonyConfig(runtime).pollEnabled).toBe(true);
+    }
+  });
+
+  it("treats non-truthy COLONY_POLL_ENABLED as false", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_POLL_ENABLED: "maybe",
+    });
+    expect(loadColonyConfig(runtime).pollEnabled).toBe(false);
+  });
+
+  it("clamps COLONY_POLL_INTERVAL_SEC below 30 to 30 seconds", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_POLL_INTERVAL_SEC: "5",
+    });
+    expect(loadColonyConfig(runtime).pollIntervalMs).toBe(30_000);
+  });
+
+  it("clamps COLONY_POLL_INTERVAL_SEC above 3600 to 3600 seconds", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_POLL_INTERVAL_SEC: "99999",
+    });
+    expect(loadColonyConfig(runtime).pollIntervalMs).toBe(3_600_000);
+  });
+
+  it("falls back to default interval when unparseable", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_POLL_INTERVAL_SEC: "abc",
+    });
+    expect(loadColonyConfig(runtime).pollIntervalMs).toBe(120_000);
   });
 
   it("throws when COLONY_API_KEY is missing", () => {

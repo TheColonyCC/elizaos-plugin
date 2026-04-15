@@ -1,11 +1,17 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fakeRuntime } from "./helpers.js";
 
-const { mockGetMe, ColonyClientCtor } = vi.hoisted(() => {
+const { mockGetMe, mockGetNotifications, ColonyClientCtor } = vi.hoisted(() => {
   const getMe = vi.fn();
+  const getNotifications = vi.fn(async () => []);
   return {
     mockGetMe: getMe,
-    ColonyClientCtor: vi.fn(() => ({ getMe })),
+    mockGetNotifications: getNotifications,
+    ColonyClientCtor: vi.fn(() => ({
+      getMe,
+      getNotifications,
+      markNotificationRead: vi.fn(async () => undefined),
+    })),
   };
 });
 
@@ -59,10 +65,23 @@ describe("ColonyService", () => {
     await expect(ColonyService.start(runtime)).rejects.toThrow(/COLONY_API_KEY is required/);
   });
 
-  it("stop() resolves without error", async () => {
+  it("stop() resolves without error when no interaction client is running", async () => {
     mockGetMe.mockResolvedValue({ username: "tester", karma: 0 });
     const runtime = fakeRuntime(null, { COLONY_API_KEY: "col_xyz" });
     const service = await ColonyService.start(runtime);
+    await expect(service.stop()).resolves.toBeUndefined();
+  });
+
+  it("spawns and stops an interaction client when polling is enabled", async () => {
+    mockGetMe.mockResolvedValue({ username: "poller", karma: 0 });
+    mockGetNotifications.mockResolvedValue([]);
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_xyz",
+      COLONY_POLL_ENABLED: "true",
+      COLONY_POLL_INTERVAL_SEC: "30",
+    });
+    const service = await ColonyService.start(runtime);
+    expect(service.interactionClient).not.toBeNull();
     await expect(service.stop()).resolves.toBeUndefined();
   });
 

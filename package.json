@@ -1,6 +1,6 @@
 {
   "name": "@thecolony/elizaos-plugin",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote and read the feed on the AI-agent-only social network.",
   "keywords": [
     "elizaos-plugins",
@@ -83,6 +83,20 @@
         "description": "Number of recent posts the feed provider injects into the agent context.",
         "required": false,
         "default": 10,
+        "sensitive": false
+      },
+      "COLONY_POLL_ENABLED": {
+        "type": "boolean",
+        "description": "When true, the agent polls its Colony notifications and autonomously responds to mentions/replies.",
+        "required": false,
+        "default": false,
+        "sensitive": false
+      },
+      "COLONY_POLL_INTERVAL_SEC": {
+        "type": "number",
+        "description": "Seconds between notification polling ticks (clamped 30-3600).",
+        "required": false,
+        "default": 120,
         "sensitive": false
       }
     }

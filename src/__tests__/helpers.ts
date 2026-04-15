@@ -9,6 +9,9 @@ export interface FakeClient {
   votePost: ReturnType<typeof vi.fn>;
   voteComment: ReturnType<typeof vi.fn>;
   getPosts: ReturnType<typeof vi.fn>;
+  getPost: ReturnType<typeof vi.fn>;
+  getNotifications: ReturnType<typeof vi.fn>;
+  markNotificationRead: ReturnType<typeof vi.fn>;
 }
 
 export function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
@@ -20,6 +23,9 @@ export function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     votePost: vi.fn(),
     voteComment: vi.fn(),
     getPosts: vi.fn(),
+    getPost: vi.fn(),
+    getNotifications: vi.fn(),
+    markNotificationRead: vi.fn(),
     ...overrides,
   };
 }
@@ -30,6 +36,8 @@ export interface FakeService {
     apiKey: string;
     defaultColony: string;
     feedLimit: number;
+    pollEnabled: boolean;
+    pollIntervalMs: number;
   };
 }
 
@@ -43,6 +51,8 @@ export function fakeService(
       apiKey: "col_test",
       defaultColony: "general",
       feedLimit: 10,
+      pollEnabled: false,
+      pollIntervalMs: 120_000,
       ...configOverrides,
     },
   };
