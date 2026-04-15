@@ -12,6 +12,7 @@ export class ColonyService extends Service {
   public client!: ColonyClient;
   public colonyConfig!: ColonyConfig;
   public interactionClient: ColonyInteractionClient | null = null;
+  public username: string | undefined;
 
   constructor(runtime?: IAgentRuntime) {
     super(runtime);
@@ -29,6 +30,7 @@ export class ColonyService extends Service {
         karma?: number;
         trust_level?: { name?: string };
       };
+      service.username = user.username;
       logger.info(
         `✅ Colony service connected as @${user.username} (karma: ${user.karma ?? 0}, trust: ${user.trust_level?.name ?? "Newcomer"})`,
       );

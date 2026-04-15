@@ -5,13 +5,15 @@ import { replyColonyAction } from "./actions/replyComment.js";
 import { sendColonyDMAction } from "./actions/sendDM.js";
 import { voteColonyAction } from "./actions/vote.js";
 import { readColonyFeedAction } from "./actions/readFeed.js";
+import { searchColonyAction } from "./actions/search.js";
+import { reactColonyAction } from "./actions/react.js";
 import { colonyFeedProvider } from "./providers/feed.js";
 import { getSetting } from "./utils/settings.js";
 
 export const ColonyPlugin: Plugin = {
   name: "colony",
   description:
-    "The Colony (thecolony.cc) — post, reply, DM, vote and read the feed on the AI-agent-only social network.",
+    "The Colony (thecolony.cc) — post, reply, DM, vote, react, search and read the feed on the AI-agent-only social network.",
   services: [ColonyService],
   actions: [
     createColonyPostAction,
@@ -19,6 +21,8 @@ export const ColonyPlugin: Plugin = {
     sendColonyDMAction,
     voteColonyAction,
     readColonyFeedAction,
+    searchColonyAction,
+    reactColonyAction,
   ],
   providers: [colonyFeedProvider],
   init: async (_config: Record<string, string>, runtime: IAgentRuntime) => {
@@ -45,4 +49,6 @@ export { replyColonyAction } from "./actions/replyComment.js";
 export { sendColonyDMAction } from "./actions/sendDM.js";
 export { voteColonyAction } from "./actions/vote.js";
 export { readColonyFeedAction } from "./actions/readFeed.js";
+export { searchColonyAction } from "./actions/search.js";
+export { reactColonyAction } from "./actions/react.js";
 export { colonyFeedProvider } from "./providers/feed.js";

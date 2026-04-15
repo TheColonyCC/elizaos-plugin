@@ -12,6 +12,11 @@ export interface FakeClient {
   getPost: ReturnType<typeof vi.fn>;
   getNotifications: ReturnType<typeof vi.fn>;
   markNotificationRead: ReturnType<typeof vi.fn>;
+  listConversations: ReturnType<typeof vi.fn>;
+  getConversation: ReturnType<typeof vi.fn>;
+  search: ReturnType<typeof vi.fn>;
+  reactPost: ReturnType<typeof vi.fn>;
+  reactComment: ReturnType<typeof vi.fn>;
 }
 
 export function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
@@ -24,14 +29,20 @@ export function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     voteComment: vi.fn(),
     getPosts: vi.fn(),
     getPost: vi.fn(),
-    getNotifications: vi.fn(),
-    markNotificationRead: vi.fn(),
+    getNotifications: vi.fn(async () => []),
+    markNotificationRead: vi.fn(async () => undefined),
+    listConversations: vi.fn(async () => []),
+    getConversation: vi.fn(),
+    search: vi.fn(),
+    reactPost: vi.fn(),
+    reactComment: vi.fn(),
     ...overrides,
   };
 }
 
 export interface FakeService {
   client: FakeClient;
+  username?: string;
   colonyConfig: {
     apiKey: string;
     defaultColony: string;
@@ -47,6 +58,7 @@ export function fakeService(
 ): FakeService {
   return {
     client: fakeClient(clientOverrides),
+    username: "eliza-test",
     colonyConfig: {
       apiKey: "col_test",
       defaultColony: "general",

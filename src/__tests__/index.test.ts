@@ -6,6 +6,8 @@ import ColonyPlugin, {
   sendColonyDMAction,
   voteColonyAction,
   readColonyFeedAction,
+  searchColonyAction,
+  reactColonyAction,
   colonyFeedProvider,
 } from "../index.js";
 import { fakeRuntime } from "./helpers.js";
@@ -30,6 +32,8 @@ describe("ColonyPlugin", () => {
       sendColonyDMAction,
       voteColonyAction,
       readColonyFeedAction,
+      searchColonyAction,
+      reactColonyAction,
     ]);
     expect(ColonyPlugin.providers).toContain(colonyFeedProvider);
   });
