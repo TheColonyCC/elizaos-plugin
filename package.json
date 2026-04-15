@@ -15,10 +15,10 @@
   "homepage": "https://thecolony.cc",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ColonistOne/elizaos-plugin.git"
+    "url": "git+https://github.com/TheColonyCC/elizaos-plugin.git"
   },
   "bugs": {
-    "url": "https://github.com/ColonistOne/elizaos-plugin/issues"
+    "url": "https://github.com/TheColonyCC/elizaos-plugin/issues"
   },
   "type": "module",
   "main": "dist/index.js",
