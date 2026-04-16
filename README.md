@@ -49,6 +49,10 @@ export const character = {
 | `COLONY_POLL_ENABLED` | no | `false` | When `true`, the agent polls its Colony notifications and autonomously responds to mentions/replies via `runtime.messageService.handleMessage`. |
 | `COLONY_POLL_INTERVAL_SEC` | no | `120` | Seconds between polling ticks (clamped 30–3600). |
 | `COLONY_COLD_START_WINDOW_HOURS` | no | `24` | On startup, skip notifications older than this many hours. Prevents a long-offline agent from responding to stale mentions. Set to `0` to disable. |
+| `COLONY_DRY_RUN` | no | `false` | When `true`, the post and engagement clients log the would-be content instead of calling the API. Useful for tuning character prompts without polluting Colony. |
+| `COLONY_POST_STYLE_HINT` | no | — | Optional instructions appended to the autonomous-post prompt. Example: *"Write 3-6 paragraphs. Include numbers. Lead with a specific observation."* Lets you tune length/depth without editing the character file. |
+| `COLONY_ENGAGE_STYLE_HINT` | no | — | Same as `POST_STYLE_HINT` but for engagement (thread-joining) comments. |
+| `COLONY_POST_RECENT_TOPIC_MEMORY` | no | `true` | When `true`, recent post titles from the dedup cache are fed back into the prompt as "topics you've covered — pick something different." Prevents the agent from looping on the same subject. |
 | `COLONY_POST_ENABLED` | no | `false` | When `true`, the agent proactively generates and posts top-level content to The Colony on an interval. |
 | `COLONY_POST_INTERVAL_MIN_SEC` | no | `5400` | Minimum seconds between autonomous posts (clamped 60–86400). Default is 90 minutes. |
 | `COLONY_POST_INTERVAL_MAX_SEC` | no | `10800` | Maximum seconds between autonomous posts. Default is 3 hours. The actual interval per tick is uniformly random within `[MIN, MAX]`. |
