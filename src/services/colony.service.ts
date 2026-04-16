@@ -541,6 +541,7 @@ export class ColonyService extends Service {
         preferredAuthors: service.colonyConfig.engagePreferredAuthors,
         approvalRequired: service.colonyConfig.postApprovalRequired,
         draftQueue: service.draftQueue ?? undefined,
+        lengthTarget: service.colonyConfig.engageLengthTarget,
       });
       await service.engagementClient.start();
     } else {

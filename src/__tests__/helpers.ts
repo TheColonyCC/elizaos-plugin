@@ -108,6 +108,7 @@ export interface FakeService {
     llmFailureCooldownMs?: number;
     reactionAuthorLimit?: number;
     reactionAuthorWindowMs?: number;
+    engageLengthTarget?: "short" | "medium" | "long";
   };
   draftQueue?: unknown;
   cooldown?: ReturnType<typeof vi.fn>;
@@ -208,6 +209,7 @@ export function fakeService(
       llmFailureCooldownMs: 30 * 60_000,
       reactionAuthorLimit: 3,
       reactionAuthorWindowMs: 2 * 3600_000,
+      engageLengthTarget: "medium" as "short" | "medium" | "long",
       ...configOverrides,
     },
     cooldown: vi.fn((ms: number) => Date.now() + ms),

@@ -83,6 +83,16 @@ export interface ColonyConfig {
    */
   reactionAuthorLimit: number;
   reactionAuthorWindowMs: number;
+  /**
+   * v0.18.0: target length for autonomous engagement comments. Drives
+   * both the prompt's length language and the default `engageMaxTokens`
+   * (when not overridden). `short` = 2-4 sentences (the v0.17 default),
+   * `medium` = 1-2 substantive paragraphs (the new default), `long` =
+   * 3-4 paragraphs with concrete claims/numbers/refs. Operators who
+   * want a precise token cap can still set COLONY_ENGAGE_MAX_TOKENS
+   * explicitly to override.
+   */
+  engageLengthTarget: "short" | "medium" | "long";
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -194,11 +204,37 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     ? Math.max(1, Math.min(20, parsedEngageLimit))
     : 5;
 
-  const engageMaxTokensRaw = getSetting(runtime, "COLONY_ENGAGE_MAX_TOKENS", "240")!;
+  // v0.18.0: COLONY_ENGAGE_LENGTH drives both the prompt's length language
+  // and the default token budget. Three presets mapped to (tokens, prompt
+  // phrase) pairs in src/services/engagement-client.ts. Default is "medium"
+  // because v0.17 shipped 2-sentence comments by default — operators were
+  // observing that as too terse for substantive thread engagement.
+  const engageLengthRaw = getSetting(
+    runtime,
+    "COLONY_ENGAGE_LENGTH",
+    "medium",
+  )!.toLowerCase().trim();
+  const engageLengthTarget: "short" | "medium" | "long" =
+    engageLengthRaw === "short"
+      ? "short"
+      : engageLengthRaw === "long"
+        ? "long"
+        : "medium";
+  const lengthTargetMaxTokens =
+    engageLengthTarget === "short" ? 240 : engageLengthTarget === "long" ? 800 : 500;
+
+  // COLONY_ENGAGE_MAX_TOKENS is an explicit override — when set, it wins
+  // over the length-target default. Lets operators tune precisely without
+  // changing the prompt language.
+  const engageMaxTokensExplicit = getSetting(runtime, "COLONY_ENGAGE_MAX_TOKENS");
+  const engageMaxTokensRaw =
+    engageMaxTokensExplicit !== undefined
+      ? engageMaxTokensExplicit
+      : String(lengthTargetMaxTokens);
   const parsedEngageMaxTokens = Number.parseInt(engageMaxTokensRaw, 10);
   const engageMaxTokens = Number.isFinite(parsedEngageMaxTokens)
     ? Math.max(32, Math.min(2000, parsedEngageMaxTokens))
-    : 240;
+    : lengthTargetMaxTokens;
 
   const engageTempRaw = getSetting(runtime, "COLONY_ENGAGE_TEMPERATURE", "0.8")!;
   const parsedEngageTemp = Number.parseFloat(engageTempRaw);
@@ -454,6 +490,7 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     llmFailureCooldownMs,
     reactionAuthorLimit,
     reactionAuthorWindowMs,
+    engageLengthTarget,
   };
 }
 

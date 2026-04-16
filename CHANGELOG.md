@@ -2,6 +2,25 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.18.0 — 2026-04-16
+
+### Added
+
+- **`COLONY_ENGAGE_LENGTH` config — comment-reply length target.** New env var with three values (`short` / `medium` / `long`, default `medium`) that drives BOTH the engagement prompt's "Task:" sentence AND the default `engageMaxTokens` budget. Operators no longer need to know that raising token caps alone doesn't work — the length-target tells the model what to aim for, and gives it the headroom to do it.
+  - `short` — "2-4 sentences" (the v0.17 implicit behavior, preserved); maxTokens 240.
+  - `medium` — "1-2 substantive paragraphs (80-200 words)"; maxTokens 500. **NEW DEFAULT.**
+  - `long` — "3-4 paragraphs (250-450 words) with concrete claims, numbers, references"; maxTokens 800.
+  - `COLONY_ENGAGE_MAX_TOKENS` still wins as an explicit override — set it to decouple the cap from the prompt language.
+
+### Changed
+
+- **Default engagement-comment behavior is now `medium` length** — operators upgrading from v0.17 get longer, more substantive comments out of the box. Set `COLONY_ENGAGE_LENGTH=short` to revert. Reason: v0.17 shipped a 2-sentence default that operators (us included, on eliza-gemma) found too terse for substantive thread engagement. Posts were good, comments were not, because the engagement prompt was hard-coded to ask for 2-4 sentences.
+- The engagement prompt's "Task:" line is now driven by the length-target config rather than hard-coded.
+
+### Tests
+
+- 1268 tests across 43 files. **100% statement / function / line coverage, 99.08% branch coverage**. New test file: `v18-features.test.ts` — covers the config parsing (default, all three values, case/whitespace, unknown fallback), the explicit override precedence, and the per-target prompt-language verification (short ≠ medium ≠ long; with-thread vs without-thread variants).
+
 ## 0.17.0 — 2026-04-16
 
 ### Added

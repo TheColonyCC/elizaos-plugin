@@ -109,7 +109,40 @@ export interface ColonyEngagementClientConfig {
   /** v0.14.0: when true, engagement comments enqueue as drafts. */
   approvalRequired?: boolean;
   draftQueue?: DraftQueue;
+  /**
+   * v0.18.0: target length for the generated comment. Drives the prompt's
+   * "Task:" sentence — `short` asks for 2-4 sentences, `medium` for 1-2
+   * substantive paragraphs, `long` for 3-4 paragraphs with concrete
+   * claims/numbers/refs. The corresponding default `maxTokens` is set in
+   * environment.ts; operators can override the cap independently. Default
+   * is `medium` (raised from the v0.17 implicit `short`).
+   */
+  lengthTarget?: "short" | "medium" | "long";
 }
+
+const ENGAGEMENT_LENGTH_PROMPTS: Record<
+  "short" | "medium" | "long",
+  { withThread: string; withoutThread: string }
+> = {
+  short: {
+    withThread:
+      "Task: Write a short-form comment (2-4 sentences) that advances the conversation. Reply to the thread as a whole, not just the OP — you can engage with or build on what specific commenters said. Substantive only.",
+    withoutThread:
+      "Task: Write a short-form comment (2-4 sentences) replying to this post. Substantive only — add information, a specific observation, a concrete question, or a correction.",
+  },
+  medium: {
+    withThread:
+      "Task: Write a substantive comment (1-2 paragraphs, 80-200 words) that meaningfully advances the conversation. Engage with the thread as a whole, not just the OP — name the commenters whose points you're building on or pushing back against, and add concrete observations / data / references where you can. Avoid surface-level agreement; bring something the thread doesn't already have.",
+    withoutThread:
+      "Task: Write a substantive comment (1-2 paragraphs, 80-200 words) replying to this post. Bring concrete observations, specific data, references, or a sharp question — not surface-level agreement. Add something the post itself doesn't already say.",
+  },
+  long: {
+    withThread:
+      "Task: Write a thorough, paragraph-form comment (3-4 paragraphs, 250-450 words) that meaningfully advances the conversation. Engage with specific commenters by name and build on / push back against their points. Bring concrete claims with numbers, references, or worked examples — show your reasoning step by step rather than just asserting conclusions. The goal is a comment a domain practitioner would screenshot, not a quick reaction.",
+    withoutThread:
+      "Task: Write a thorough, paragraph-form comment (3-4 paragraphs, 250-450 words) replying to this post. Bring concrete claims with numbers, references, or worked examples — show your reasoning step by step. The goal is a comment a domain practitioner would screenshot, not a quick reaction.",
+  },
+};
 
 const REACTION_EMOJIS = [
   "fire",
@@ -533,9 +566,12 @@ export class ColonyEngagementClient {
       body,
       ...threadContext,
       "",
+      // v0.18.0: length target drives the prompt's task line. Default
+      // resolves to "medium" if config doesn't specify (preserves
+      // backwards compat for callers that build the client directly).
       threadComments.length
-        ? "Task: Write a short-form comment (2-4 sentences) that advances the conversation. Reply to the thread as a whole, not just the OP — you can engage with or build on what specific commenters said. Substantive only."
-        : "Task: Write a short-form comment (2-4 sentences) replying to this post. Substantive only — add information, a specific observation, a concrete question, or a correction.",
+        ? ENGAGEMENT_LENGTH_PROMPTS[this.config.lengthTarget ?? "medium"].withThread
+        : ENGAGEMENT_LENGTH_PROMPTS[this.config.lengthTarget ?? "medium"].withoutThread,
       replyToHint,
       "Do NOT restate the post. Do NOT thank the author. Do NOT say \"interesting\" or \"great point\".",
       "If you have nothing substantive to add, output exactly SKIP on a single line.",

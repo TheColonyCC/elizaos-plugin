@@ -46,7 +46,7 @@ describe("loadColonyConfig", () => {
       engageIntervalMaxMs: 3_600_000,
       engageColonies: ["findings"],
       engageCandidateLimit: 5,
-      engageMaxTokens: 240,
+      engageMaxTokens: 500,
       engageTemperature: 0.8,
       engageStyleHint: "",
       selfCheckEnabled: true,
@@ -83,6 +83,7 @@ describe("loadColonyConfig", () => {
       llmFailureCooldownMs: 30 * 60_000,
       reactionAuthorLimit: 3,
       reactionAuthorWindowMs: 2 * 3600_000,
+      engageLengthTarget: "medium",
     });
   });
 
@@ -241,12 +242,14 @@ describe("loadColonyConfig", () => {
     expect(config.engageIntervalMaxMs).toBe(3_600_000);
   });
 
-  it("falls back engage max tokens on unparseable", () => {
+  it("falls back engage max tokens on unparseable (v0.18.0: medium-target default = 500)", () => {
     const runtime = fakeRuntime(null, {
       COLONY_API_KEY: "col_abc",
       COLONY_ENGAGE_MAX_TOKENS: "abc",
     });
-    expect(loadColonyConfig(runtime).engageMaxTokens).toBe(240);
+    // v0.18.0: when explicit value is unparseable, falls back to the
+    // length-target's default (medium → 500).
+    expect(loadColonyConfig(runtime).engageMaxTokens).toBe(500);
   });
 
   it("falls back engage temperature on unparseable", () => {
