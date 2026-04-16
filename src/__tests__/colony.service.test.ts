@@ -424,7 +424,8 @@ describe("ColonyService", () => {
       expect(service.activityLog.length).toBe(before + 1);
       const entry = service.activityLog[service.activityLog.length - 1]!;
       expect(entry.type).toBe("backoff_triggered");
-      expect(entry.detail).toContain("operator cooldown: operator test");
+      // v0.19.0: detail prefix became the PauseReason enum value.
+      expect(entry.detail).toContain("operator_cooldown: operator test");
     });
 
     it("is non-cumulative — can't shorten an existing longer pause", async () => {
@@ -467,6 +468,97 @@ describe("ColonyService", () => {
       service.cooldown(30 * 60_000);
       const entry = service.activityLog[service.activityLog.length - 1]!;
       expect(entry.detail).not.toContain("operator cooldown:");
+    });
+  });
+
+  describe("v0.19.0 diversity watchdog wiring", () => {
+    it("instantiates the watchdog when threshold > 0", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_DIVERSITY_THRESHOLD: "0.8",
+        }),
+      );
+      expect(service.diversityWatchdog).not.toBeNull();
+    });
+
+    it("leaves watchdog disabled when threshold === 0", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_DIVERSITY_THRESHOLD: "0",
+        }),
+      );
+      expect(service.diversityWatchdog).toBeNull();
+    });
+
+    it("recordGeneratedOutput is a no-op when watchdog is disabled", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_DIVERSITY_THRESHOLD: "0",
+        }),
+      );
+      service.recordGeneratedOutput("anything");
+      expect(service.pausedUntilTs).toBe(0);
+      expect(service.pauseReason).toBeNull();
+    });
+
+    it("recordGeneratedOutput doesn't trip on a single call", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_DIVERSITY_THRESHOLD: "0.8",
+          COLONY_DIVERSITY_WINDOW: "3",
+        }),
+      );
+      service.recordGeneratedOutput("the quick brown fox");
+      expect(service.pausedUntilTs).toBe(0);
+    });
+
+    it("trips the pause when the last N outputs are too similar", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_DIVERSITY_THRESHOLD: "0.5",
+          COLONY_DIVERSITY_WINDOW: "3",
+          COLONY_DIVERSITY_COOLDOWN_MIN: "30",
+        }),
+      );
+      const body = "the quick brown fox jumps over the lazy dog";
+      service.recordGeneratedOutput(body);
+      service.recordGeneratedOutput(body);
+      service.recordGeneratedOutput(body);
+      expect(service.isPausedForBackoff()).toBe(true);
+      expect(service.pauseReason).toBe("semantic_repetition");
+      const entry = service.activityLog[service.activityLog.length - 1]!;
+      expect(entry.type).toBe("backoff_triggered");
+      expect(entry.detail).toContain("semantic_repetition");
+    });
+
+    it("clears the pause state after the cooldown elapses", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_DIVERSITY_THRESHOLD: "0.5",
+          COLONY_DIVERSITY_WINDOW: "2",
+          COLONY_DIVERSITY_COOLDOWN_MIN: "30",
+        }),
+      );
+      const body = "the quick brown fox";
+      service.recordGeneratedOutput(body);
+      service.recordGeneratedOutput(body);
+      expect(service.pauseReason).toBe("semantic_repetition");
+      // Fast-forward past the pause
+      service.pausedUntilTs = Date.now() - 1;
+      expect(service.isPausedForBackoff()).toBe(false);
+      expect(service.pauseReason).toBeNull();
     });
   });
 

@@ -28,9 +28,37 @@ describe("replyColonyAction", () => {
       expect(await replyColonyAction.validate(runtime, fakeMessage(""))).toBe(false);
     });
 
-    it("returns true when keyword matches", async () => {
+    it("returns true when keyword + post URL present (v0.19.0)", async () => {
       const runtime = fakeRuntime(service);
-      expect(await replyColonyAction.validate(runtime, fakeMessage("reply to this"))).toBe(true);
+      expect(
+        await replyColonyAction.validate(
+          runtime,
+          fakeMessage(
+            "reply to https://thecolony.cc/post/11111111-2222-3333-4444-555555555555",
+          ),
+        ),
+      ).toBe(true);
+    });
+
+    it("returns true when keyword + postId: arg present (v0.19.0)", async () => {
+      const runtime = fakeRuntime(service);
+      expect(
+        await replyColonyAction.validate(
+          runtime,
+          fakeMessage("reply postId: abc-123"),
+        ),
+      ).toBe(true);
+    });
+
+    it("returns false for bare keyword without a post reference (v0.19.0)", async () => {
+      // v0.19.0: tightened validate() — a keyword alone is not enough.
+      // Without a post URL or postId arg, the reactive-path message
+      // "reply to this" is ambiguous and would trigger the tool-args-
+      // request callback that previously leaked as a comment.
+      const runtime = fakeRuntime(service);
+      expect(
+        await replyColonyAction.validate(runtime, fakeMessage("reply to this")),
+      ).toBe(false);
     });
 
     it("returns false when no keyword", async () => {

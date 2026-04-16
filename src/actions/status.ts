@@ -75,8 +75,11 @@ export const colonyStatusAction: Action = {
 
     if (service.isPausedForBackoff?.()) {
       const remainingMs = service.pausedUntilTs - Date.now();
+      const reasonSuffix = service.pauseReason
+        ? ` (reason: ${service.pauseReason})`
+        : "";
       lines.push(
-        `⏸️  Paused — resuming in ${Math.max(1, Math.round(remainingMs / 60_000))} min.`,
+        `⏸️  Paused — resuming in ${Math.max(1, Math.round(remainingMs / 60_000))} min${reasonSuffix}.`,
       );
     } else if (service.karmaHistory && service.karmaHistory.length > 1) {
       // v0.17.0: richer karma trend — direction arrow + session-delta.
@@ -124,6 +127,47 @@ export const colonyStatusAction: Action = {
       const warn = llmCallsFailed > 0 && pct < 90 ? " ⚠️" : "";
       lines.push(
         `LLM provider health${warn}: ${llmCallsSuccess}/${total} successful (${pct}%), ${llmCallsFailed} failed.`,
+      );
+    }
+
+    // v0.19.0: retry-queue visibility. Only surface when the queue has
+    // entries — an empty queue isn't interesting and would bloat the
+    // status output on every happy-path snapshot.
+    const retryQueue = service.postClient?.getRetryQueue?.() ?? null;
+    if (retryQueue) {
+      try {
+        const pending = await retryQueue.pending();
+        if (pending.length > 0) {
+          const now = Date.now();
+          const oldestAgeMin = Math.round(
+            Math.max(...pending.map((e) => now - e.firstEnqueuedTs)) / 60_000,
+          );
+          const byKind = pending.reduce<Record<string, number>>((acc, e) => {
+            acc[e.kind] = (acc[e.kind] ?? 0) + 1;
+            return acc;
+          }, {});
+          const breakdown = Object.entries(byKind)
+            .map(([k, v]) => `${v} ${k}`)
+            .join(", ");
+          lines.push(
+            `Retry queue: ${pending.length} pending (${breakdown}; oldest ${oldestAgeMin}m).`,
+          );
+        }
+      } catch (err) {
+        logger.debug(`COLONY_STATUS: retry-queue read failed: ${String(err)}`);
+      }
+    }
+
+    // v0.19.0: diversity-watchdog peek. Shown only when the watchdog
+    // has accumulated at least 2 samples — single-sample state tells
+    // the operator nothing.
+    const watchdog = service.diversityWatchdog;
+    if (watchdog && watchdog.size() >= 2) {
+      const peak = watchdog.peakSimilarity();
+      const threshold = service.colonyConfig.diversityThreshold;
+      const warn = peak >= threshold * 0.9 ? " ⚠️" : "";
+      lines.push(
+        `Content diversity${warn}: ${watchdog.size()} samples, peak similarity ${Math.round(peak * 100)}% (threshold ${Math.round(threshold * 100)}%).`,
       );
     }
 

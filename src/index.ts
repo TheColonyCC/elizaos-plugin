@@ -198,3 +198,18 @@ export {
   stripLLMArtifacts,
   validateGeneratedOutput,
 } from "./services/output-validator.js";
+export {
+  COLONY_ACTION_NAMES,
+  isColonyActionName,
+} from "./services/action-names.js";
+export {
+  DiversityWatchdog,
+  DEFAULT_DIVERSITY_CONFIG,
+  jaccard,
+  type DiversityWatchdogConfig,
+} from "./services/diversity-watchdog.js";
+export {
+  handleOperatorCommand,
+  parseDurationMs,
+  type OperatorCommandResult,
+} from "./services/operator-commands.js";

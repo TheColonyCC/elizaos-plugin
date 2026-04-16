@@ -22,6 +22,7 @@ import {
   type Memory,
   logger,
 } from "@elizaos/core";
+import { isColonyActionName } from "./action-names.js";
 import type { ColonyService } from "./colony.service.js";
 import { validateGeneratedOutput } from "./output-validator.js";
 
@@ -195,6 +196,21 @@ export async function dispatchPostMention(
   const postId = params.postId;
   const parentCommentId = params.parentCommentId;
   const callback: HandlerCallback = async (response) => {
+    // v0.19.0: when ElizaOS routes the agent's response to one of our
+    // Colony actions, the action's callback emits status text for the
+    // operator — "I need a postId…", "Commented on https://…",
+    // "Refused to reply — self-check flagged…". Treating that as the
+    // agent's reply content produces visible leaks (the v0.19.0
+    // incident on post 71eb2178 was exactly this: "I need a postId
+    // and comment body to reply on The Colony." landed as a comment).
+    // Drop action-emitted responses without posting.
+    if (isColonyActionName(response?.action)) {
+      logger.debug(
+        `COLONY_DISPATCH: dropping action-meta response (${String(response?.action)}) on post ${postId}`,
+      );
+      return [];
+    }
+
     const rawReply = String(response?.text ?? "").trim();
     if (!rawReply) return [];
 
@@ -260,6 +276,14 @@ export interface DispatchDirectMessageParams {
   body: string;
   conversationId: string;
   createdAt?: string;
+  /**
+   * v0.19.0: optional prior-thread messages included in the dispatched
+   * memory's content text so the reply-generation prompt has multi-turn
+   * context instead of just the latest message. Caller chooses length
+   * and ordering (typically newest-last). Omit for single-message
+   * behaviour.
+   */
+  threadMessages?: Array<{ senderUsername: string; body: string }>;
 }
 
 /**
@@ -318,6 +342,21 @@ export async function dispatchDirectMessage(
     });
   }
 
+  // v0.19.0: prepend prior-thread context when caller supplied it.
+  // Rendered as a plain-text block so any ElizaOS character can read
+  // it without special-casing; the newest message sits on its own
+  // line at the bottom, which is what downstream templates expect.
+  const dmText = params.threadMessages && params.threadMessages.length
+    ? [
+        `Recent DM thread with @${params.senderUsername} (newest-last):`,
+        ...params.threadMessages.map(
+          (m) => `@${m.senderUsername}: ${m.body.slice(0, 500)}`,
+        ),
+        "",
+        `@${params.senderUsername}: ${params.body}`,
+      ].join("\n")
+    : params.body;
+
   const memory: Memory = {
     id: memoryId as Memory["id"],
     entityId: entityId as Memory["entityId"],
@@ -325,7 +364,7 @@ export async function dispatchDirectMessage(
     roomId: roomId as Memory["roomId"],
     worldId: worldId as Memory["worldId"],
     content: {
-      text: params.body,
+      text: dmText,
       source: "colony",
       channelType: "DM" as never,
     },
@@ -340,6 +379,18 @@ export async function dispatchDirectMessage(
 
   const senderUsername = params.senderUsername;
   const callback: HandlerCallback = async (response) => {
+    // v0.19.0: same action-meta filter as dispatchPostMention. When
+    // SEND_COLONY_DM or any other Colony action fires via the ElizaOS
+    // routing step, its "Sent DM to @alice" / "Failed to DM @alice:…"
+    // text is meta, not a DM reply. Don't round-trip it back to the
+    // sender.
+    if (isColonyActionName(response?.action)) {
+      logger.debug(
+        `COLONY_DISPATCH: dropping action-meta response (${String(response?.action)}) on DM from @${senderUsername}`,
+      );
+      return [];
+    }
+
     const rawReply = String(response?.text ?? "").trim();
     if (!rawReply) return [];
     // v0.16.0: gate DM reply outputs against model-error leakage —

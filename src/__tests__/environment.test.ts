@@ -84,7 +84,87 @@ describe("loadColonyConfig", () => {
       reactionAuthorLimit: 3,
       reactionAuthorWindowMs: 2 * 3600_000,
       engageLengthTarget: "medium",
+      diversityWindowSize: 3,
+      diversityThreshold: 0.8,
+      diversityNgram: 3,
+      diversityCooldownMs: 60 * 60_000,
+      operatorUsername: "",
+      operatorPrefix: "!",
+      dmContextMessages: 0,
     });
+  });
+
+  it("v0.19.0 — parses and clamps diversity settings", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_DIVERSITY_WINDOW: "100", // clamp to 20
+      COLONY_DIVERSITY_THRESHOLD: "2.5", // clamp to 1
+      COLONY_DIVERSITY_NGRAM: "99", // clamp to 8
+      COLONY_DIVERSITY_COOLDOWN_MIN: "0", // invalid, fallback to 60
+    });
+    const cfg = loadColonyConfig(runtime);
+    expect(cfg.diversityWindowSize).toBe(20);
+    expect(cfg.diversityThreshold).toBe(1);
+    expect(cfg.diversityNgram).toBe(8);
+    expect(cfg.diversityCooldownMs).toBe(60 * 60_000);
+  });
+
+  it("v0.19.0 — falls back to defaults on unparseable diversity settings", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_DIVERSITY_WINDOW: "not-a-number",
+      COLONY_DIVERSITY_THRESHOLD: "nope",
+      COLONY_DIVERSITY_NGRAM: "NaN",
+      COLONY_DIVERSITY_COOLDOWN_MIN: "forever",
+    });
+    const cfg = loadColonyConfig(runtime);
+    expect(cfg.diversityWindowSize).toBe(3);
+    expect(cfg.diversityThreshold).toBe(0.8);
+    expect(cfg.diversityNgram).toBe(3);
+    expect(cfg.diversityCooldownMs).toBe(60 * 60_000);
+  });
+
+  it("v0.19.0 — parses operator kill-switch and DM context settings", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_OPERATOR_USERNAME: "  Jack  ",
+      COLONY_OPERATOR_PREFIX: "!!",
+      COLONY_DM_CONTEXT_MESSAGES: "8",
+    });
+    const cfg = loadColonyConfig(runtime);
+    expect(cfg.operatorUsername).toBe("jack");
+    expect(cfg.operatorPrefix).toBe("!!");
+    expect(cfg.dmContextMessages).toBe(8);
+  });
+
+  it("v0.19.0 — falls back to '!' when COLONY_OPERATOR_PREFIX is empty", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_OPERATOR_PREFIX: "",
+    });
+    const cfg = loadColonyConfig(runtime);
+    expect(cfg.operatorPrefix).toBe("!");
+  });
+
+  it("parses COLONY_ENGAGE_FOLLOW_WEIGHT=soft (v0.14.0 branch)", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_ENGAGE_FOLLOW_WEIGHT: "soft",
+    });
+    expect(loadColonyConfig(runtime).engageFollowWeight).toBe("soft");
+  });
+
+  it("v0.19.0 — clamps COLONY_DM_CONTEXT_MESSAGES and falls back on garbage", () => {
+    const clamp = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_DM_CONTEXT_MESSAGES: "100",
+    });
+    expect(loadColonyConfig(clamp).dmContextMessages).toBe(50);
+    const garbage = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_DM_CONTEXT_MESSAGES: "nonsense",
+    });
+    expect(loadColonyConfig(garbage).dmContextMessages).toBe(0);
   });
 
   it("parses COLONY_DRY_RUN and new v0.8.0 style/topic vars", () => {
