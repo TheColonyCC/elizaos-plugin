@@ -351,4 +351,125 @@ describe("ColonyService", () => {
       expect(backoffEntry!.detail).toContain("−50");
     });
   });
+
+  describe("cooldown (v0.12.0)", () => {
+    it("sets pausedUntilTs and records activity", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      const before = service.activityLog.length;
+      const expiry = service.cooldown(30 * 60_000, "operator test");
+      expect(expiry).toBeGreaterThan(Date.now());
+      expect(service.isPausedForBackoff()).toBe(true);
+      expect(service.activityLog.length).toBe(before + 1);
+      const entry = service.activityLog[service.activityLog.length - 1]!;
+      expect(entry.type).toBe("backoff_triggered");
+      expect(entry.detail).toContain("operator cooldown: operator test");
+    });
+
+    it("is non-cumulative — can't shorten an existing longer pause", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      const first = service.cooldown(60 * 60_000);
+      const second = service.cooldown(5 * 60_000);
+      expect(second).toBe(first);
+      expect(service.isPausedForBackoff()).toBe(true);
+    });
+
+    it("extends pause when new cooldown is longer", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      const first = service.cooldown(10 * 60_000);
+      const second = service.cooldown(60 * 60_000);
+      expect(second).toBeGreaterThan(first);
+    });
+
+    it("clamps negative durations to 0", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      // Negative duration → max with 0 → requested equals now → expiry remains 0 (no pause)
+      const expiry = service.cooldown(-5_000);
+      // now+0 === current time, pausedUntilTs stays 0 (since !(now <= 0))
+      expect(expiry).toBe(service.pausedUntilTs);
+    });
+
+    it("cooldown without reason omits the reason-qualifier", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      service.cooldown(30 * 60_000);
+      const entry = service.activityLog[service.activityLog.length - 1]!;
+      expect(entry.detail).not.toContain("operator cooldown:");
+    });
+  });
+
+  describe("shutdown handlers (v0.12.0)", () => {
+    it("does not register signal handlers when COLONY_REGISTER_SIGNAL_HANDLERS=false", async () => {
+      const before = process.listenerCount("SIGTERM");
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      expect(process.listenerCount("SIGTERM")).toBe(before);
+      await service.stop();
+    });
+
+    it("registers and then cleans up SIGTERM / SIGINT listeners when enabled", async () => {
+      const beforeTerm = process.listenerCount("SIGTERM");
+      const beforeInt = process.listenerCount("SIGINT");
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_REGISTER_SIGNAL_HANDLERS: "true",
+        }),
+      );
+      expect(process.listenerCount("SIGTERM")).toBe(beforeTerm + 1);
+      expect(process.listenerCount("SIGINT")).toBe(beforeInt + 1);
+      await service.stop();
+      // After stop, handlers removed
+      expect(process.listenerCount("SIGTERM")).toBe(beforeTerm);
+      expect(process.listenerCount("SIGINT")).toBe(beforeInt);
+    });
+
+    it("registerShutdownHandlers is idempotent", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_REGISTER_SIGNAL_HANDLERS: "true",
+        }),
+      );
+      const count1 = process.listenerCount("SIGTERM");
+      service.registerShutdownHandlers();
+      service.registerShutdownHandlers();
+      expect(process.listenerCount("SIGTERM")).toBe(count1);
+      await service.stop();
+    });
+
+    it("SIGTERM handler calls service.stop when triggered", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_REGISTER_SIGNAL_HANDLERS: "true",
+        }),
+      );
+      const stopSpy = vi.spyOn(service, "stop");
+      // Fire SIGTERM — Node's process emitter synchronously invokes listeners
+      process.emit("SIGTERM");
+      // stopSpy should have been called by the handler
+      expect(stopSpy).toHaveBeenCalled();
+      // clean up listener and state
+      await service.stop();
+    });
+  });
 });

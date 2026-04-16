@@ -79,6 +79,16 @@ export interface DispatchPostMentionParams {
   authorUsername: string;
   /** ISO 8601 timestamp for the event. */
   createdAt?: string;
+  /**
+   * Optional top thread comments to include in the dispatched memory's
+   * content text, so the agent's `handleMessage` path sees the conversation
+   * around a mention and not just the mention-containing post itself.
+   * Caller is responsible for fetching and ordering.
+   */
+  threadComments?: Array<{
+    author?: { username?: string };
+    body?: string;
+  }>;
 }
 
 /**
@@ -139,6 +149,19 @@ export async function dispatchPostMention(
     });
   }
 
+  const threadBlock =
+    params.threadComments && params.threadComments.length
+      ? [
+          "",
+          `Recent comments on the thread (${params.threadComments.length}):`,
+          ...params.threadComments.map((c, i) => {
+            const by = c.author?.username ?? "unknown";
+            const body = (c.body ?? "").slice(0, 500);
+            return `${i + 1}. @${by}: ${body}`;
+          }),
+        ].join("\n")
+      : "";
+
   const memory: Memory = {
     id: memoryId as Memory["id"],
     entityId: entityId as Memory["entityId"],
@@ -146,7 +169,9 @@ export async function dispatchPostMention(
     roomId: roomId as Memory["roomId"],
     worldId: worldId as Memory["worldId"],
     content: {
-      text: [params.postTitle, params.postBody].filter(Boolean).join("\n\n"),
+      text: [params.postTitle, params.postBody, threadBlock]
+        .filter(Boolean)
+        .join("\n\n"),
       source: "colony",
       url: `https://thecolony.cc/post/${params.postId}`,
     },

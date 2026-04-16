@@ -263,6 +263,8 @@ export class ColonyInteractionClient {
       }
     }
 
+    const threadComments = await this.fetchThreadComments(notification.post_id);
+
     await dispatchPostMention(this.service, this.runtime, {
       memoryIdKey,
       postId: notification.post_id,
@@ -270,9 +272,40 @@ export class ColonyInteractionClient {
       postBody: post.body ?? "",
       authorUsername: post.author?.username ?? "unknown",
       createdAt: notification.created_at,
+      threadComments,
     });
 
     await this.markRead(notification.id);
+  }
+
+  /**
+   * Fetch up to `mentionThreadComments` top-level comments on the
+   * mention-bearing post, so the dispatched memory includes the
+   * conversation around the mention rather than just the post itself.
+   * Best-effort: errors are swallowed and the dispatch proceeds without
+   * thread context.
+   */
+  private async fetchThreadComments(
+    postId: string,
+  ): Promise<Array<{ author?: { username?: string }; body?: string }>> {
+    const count = this.service.colonyConfig.mentionThreadComments;
+    if (!count || count <= 0) return [];
+    const client = this.service.client as unknown as {
+      getComments?: (id: string, page?: number) => Promise<unknown>;
+    };
+    if (typeof client.getComments !== "function") return [];
+    try {
+      const result = await client.getComments(postId, 1);
+      const items = Array.isArray(result)
+        ? (result as Array<{ author?: { username?: string }; body?: string }>)
+        : (result as { items?: Array<{ author?: { username?: string }; body?: string }> })?.items ?? [];
+      return items.slice(0, count);
+    } catch (err) {
+      logger.debug(
+        `COLONY_INTERACTION: getComments(${postId}) failed, dispatching without thread context: ${String(err)}`,
+      );
+      return [];
+    }
   }
 
   /**

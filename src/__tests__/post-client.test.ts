@@ -624,6 +624,39 @@ describe("ColonyPostClient", () => {
       await c.stop();
     });
 
+    it("passes modelType to useModel for generation", async () => {
+      service.client.createPost.mockResolvedValue({ id: "p-model" });
+      const c = new ColonyPostClient(service as never, runtime, config({ modelType: "TEXT_LARGE" }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(runtime.useModel).toHaveBeenCalledWith("TEXT_LARGE", expect.any(Object));
+      await c.stop();
+    });
+
+    it("rejects banned content via self-check", async () => {
+      let i = 0;
+      runtime.useModel = vi.fn(async () => {
+        return ["Buy acme widgets today", "SKIP"][i++] ?? "SKIP";
+      });
+      const c = new ColonyPostClient(service as never, runtime, config({
+        selfCheck: true,
+        bannedPatterns: [/acme/i],
+      }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.client.createPost).not.toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("emits JSON event line when logFormat is 'json'", async () => {
+      service.client.createPost.mockResolvedValue({ id: "p-json" });
+      const c = new ColonyPostClient(service as never, runtime, config({ logFormat: "json" }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.client.createPost).toHaveBeenCalled();
+      await c.stop();
+    });
+
     it("drops the tick when scorer flags INJECTION", async () => {
       let i = 0;
       runtime.useModel = vi.fn(async () => {

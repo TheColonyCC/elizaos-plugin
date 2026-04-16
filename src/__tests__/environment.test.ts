@@ -58,6 +58,13 @@ describe("loadColonyConfig", () => {
       engageRequireTopicMatch: false,
       mentionMinKarma: 0,
       postDefaultType: "discussion",
+      mentionThreadComments: 3,
+      bannedPatterns: [],
+      postModelType: "TEXT_SMALL",
+      engageModelType: "TEXT_SMALL",
+      scorerModelType: "TEXT_SMALL",
+      registerSignalHandlers: false,
+      logFormat: "text",
     });
   });
 
@@ -511,5 +518,109 @@ describe("loadColonyConfig", () => {
         COLONY_POST_DEFAULT_TYPE: "  ANALYSIS  ",
       })).postDefaultType,
     ).toBe("analysis");
+  });
+
+  // v0.12.0
+  it("parses COLONY_MENTION_THREAD_COMMENTS and clamps", () => {
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_MENTION_THREAD_COMMENTS: "5",
+      })).mentionThreadComments,
+    ).toBe(5);
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_MENTION_THREAD_COMMENTS: "99",
+      })).mentionThreadComments,
+    ).toBe(10);
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_MENTION_THREAD_COMMENTS: "abc",
+      })).mentionThreadComments,
+    ).toBe(3);
+  });
+
+  it("parses COLONY_BANNED_PATTERNS into RegExp array", () => {
+    const c = loadColonyConfig(fakeRuntime(null, {
+      COLONY_API_KEY: "col_a",
+      COLONY_BANNED_PATTERNS: "acme, foo\\.bar",
+    }));
+    expect(c.bannedPatterns.length).toBe(2);
+    expect(c.bannedPatterns[0]!.test("Acme launch")).toBe(true);
+    expect(c.bannedPatterns[1]!.test("foo.bar site")).toBe(true);
+  });
+
+  it("skips invalid regexes in banned patterns without crashing", () => {
+    const c = loadColonyConfig(fakeRuntime(null, {
+      COLONY_API_KEY: "col_a",
+      COLONY_BANNED_PATTERNS: "acme, [unclosed, foo",
+    }));
+    expect(c.bannedPatterns.length).toBe(2);
+  });
+
+  it("ignores blank pattern entries", () => {
+    const c = loadColonyConfig(fakeRuntime(null, {
+      COLONY_API_KEY: "col_a",
+      COLONY_BANNED_PATTERNS: "acme,   , foo",
+    }));
+    expect(c.bannedPatterns.length).toBe(2);
+  });
+
+  it("parses model-type env vars with TEXT_SMALL fallback", () => {
+    const c = loadColonyConfig(fakeRuntime(null, {
+      COLONY_API_KEY: "col_a",
+      COLONY_POST_MODEL_TYPE: "TEXT_LARGE",
+      COLONY_ENGAGE_MODEL_TYPE: "text_large",
+      COLONY_SCORER_MODEL_TYPE: "TEXT_SMALL",
+    }));
+    expect(c.postModelType).toBe("TEXT_LARGE");
+    expect(c.engageModelType).toBe("TEXT_LARGE");
+    expect(c.scorerModelType).toBe("TEXT_SMALL");
+  });
+
+  it("falls back to TEXT_SMALL on invalid model types", () => {
+    const c = loadColonyConfig(fakeRuntime(null, {
+      COLONY_API_KEY: "col_a",
+      COLONY_POST_MODEL_TYPE: "TEXT_GIGANTIC",
+    }));
+    expect(c.postModelType).toBe("TEXT_SMALL");
+  });
+
+  it("parses COLONY_REGISTER_SIGNAL_HANDLERS as boolean", () => {
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_REGISTER_SIGNAL_HANDLERS: "true",
+      })).registerSignalHandlers,
+    ).toBe(true);
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_REGISTER_SIGNAL_HANDLERS: "no",
+      })).registerSignalHandlers,
+    ).toBe(false);
+  });
+
+  it("parses COLONY_LOG_FORMAT", () => {
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_LOG_FORMAT: "json",
+      })).logFormat,
+    ).toBe("json");
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_LOG_FORMAT: "text",
+      })).logFormat,
+    ).toBe("text");
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_LOG_FORMAT: "garbage",
+      })).logFormat,
+    ).toBe("text");
   });
 });

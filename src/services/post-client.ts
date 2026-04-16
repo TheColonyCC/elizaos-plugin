@@ -27,6 +27,7 @@ import {
 } from "@elizaos/core";
 import type { ColonyService } from "./colony.service.js";
 import { scorePost } from "./post-scorer.js";
+import { emitEvent } from "../utils/emitEvent.js";
 
 const CACHE_KEY_PREFIX = "colony/post-client/recent";
 const DAILY_LEDGER_PREFIX = "colony/post-client/daily";
@@ -79,6 +80,25 @@ export interface ColonyPostClientConfig {
    * selects which metadata schema the post is rendered under on Colony.
    */
   postType?: string;
+  /**
+   * `ModelType` string used for the generation call. Defaults to
+   * `TEXT_SMALL`. Operators can upgrade to `TEXT_LARGE` for more
+   * substantive posts at higher cost.
+   */
+  modelType?: string;
+  /**
+   * Operator-supplied regex patterns. Autonomous posts that match any
+   * pattern are rejected in the self-check phase. Passed through to the
+   * scorer.
+   */
+  bannedPatterns?: RegExp[];
+  /**
+   * `ModelType` string for the scorer's self-check call. Defaults to
+   * `TEXT_SMALL`.
+   */
+  scorerModelType?: string;
+  /** "text" | "json" — controls structured event output. */
+  logFormat?: "text" | "json";
 }
 
 export class ColonyPostClient {
@@ -161,8 +181,9 @@ export class ColonyPostClient {
 
     let generated: string;
     try {
+      const modelType = (this.config.modelType ?? ModelType.TEXT_SMALL) as never;
       generated = String(
-        await this.runtime.useModel(ModelType.TEXT_SMALL, {
+        await this.runtime.useModel(modelType, {
           prompt,
           temperature: this.config.temperature,
           maxTokens: this.config.maxTokens,
@@ -189,8 +210,11 @@ export class ColonyPostClient {
     const { title, body } = splitTitleBody(content);
 
     if (this.config.selfCheck ?? true) {
-      const score = await scorePost(this.runtime, { title, body });
-      if (score === "SPAM" || score === "INJECTION") {
+      const score = await scorePost(this.runtime, { title, body }, {
+        bannedPatterns: this.config.bannedPatterns,
+        modelType: this.config.scorerModelType,
+      });
+      if (score === "SPAM" || score === "INJECTION" || score === "BANNED") {
         logger.warn(
           `COLONY_POST_CLIENT: self-check rejected generated post as ${score}, skipping tick`,
         );
@@ -200,6 +224,12 @@ export class ColonyPostClient {
           undefined,
           `post client ${score}: ${title.slice(0, 40)}`,
         );
+        emitEvent(this.config.logFormat ?? "text", {
+          level: "warn",
+          event: "post.self_check_rejected",
+          score,
+          title: title.slice(0, 80),
+        }, `self-check rejected post as ${score}`);
         return;
       }
     }
@@ -239,6 +269,15 @@ export class ColonyPostClient {
         post.id,
         `autopost c/${this.config.colony}: ${title.slice(0, 60)}`,
       );
+      emitEvent(this.config.logFormat ?? "text", {
+        level: "info",
+        event: "post.created",
+        postId: post.id,
+        colony: this.config.colony,
+        title: title.slice(0, 80),
+        bodyLength: body.length,
+        autonomous: true,
+      }, `autopost c/${this.config.colony}: ${post.id}`);
     } catch (err) {
       logger.warn(`COLONY_POST_CLIENT: createPost failed: ${String(err)}`);
     }

@@ -64,6 +64,7 @@ export class ColonyService extends Service {
   public karmaHistory: KarmaSnapshot[] = [];
   public pausedUntilTs = 0;
   public activityLog: ActivityEntry[] = [];
+  private signalHandlersRegistered: Array<{ sig: NodeJS.Signals; handler: () => void }> = [];
 
   constructor(runtime?: IAgentRuntime) {
     super(runtime);
@@ -163,6 +164,58 @@ export class ColonyService extends Service {
     await this.refreshKarma();
   }
 
+  /**
+   * Operator-triggered pause. Sets pausedUntilTs to now + durationMs and
+   * records an activity entry. Reuses the same state field as the karma-
+   * aware auto-pause, so {@link isPausedForBackoff} reflects both. Cannot
+   * shorten an already-active longer pause.
+   */
+  cooldown(durationMs: number, reason?: string): number {
+    const now = Date.now();
+    const requested = now + Math.max(0, durationMs);
+    if (requested <= this.pausedUntilTs) {
+      return this.pausedUntilTs;
+    }
+    this.pausedUntilTs = requested;
+    this.recordActivity(
+      "backoff_triggered",
+      undefined,
+      `operator cooldown${reason ? `: ${reason}` : ""} for ${Math.round(durationMs / 60_000)}min`,
+    );
+    logger.info(
+      `⏸️  COLONY_SERVICE: operator cooldown until ${new Date(this.pausedUntilTs).toISOString()}${reason ? ` (${reason})` : ""}`,
+    );
+    return this.pausedUntilTs;
+  }
+
+  /**
+   * Register process-level SIGTERM / SIGINT handlers that stop the service
+   * on shutdown signals. Opt-in to avoid stepping on host shutdown logic.
+   */
+  registerShutdownHandlers(): void {
+    if (this.signalHandlersRegistered.length) return;
+    const signals: NodeJS.Signals[] = ["SIGTERM", "SIGINT"];
+    for (const sig of signals) {
+      const handler = this.makeShutdownHandler(sig);
+      process.on(sig, handler);
+      this.signalHandlersRegistered.push({ sig, handler });
+    }
+  }
+
+  private makeShutdownHandler(sig: NodeJS.Signals): () => void {
+    return () => {
+      logger.info(`⏹️  COLONY_SERVICE: received ${sig}, stopping clients`);
+      void this.stop();
+    };
+  }
+
+  private unregisterShutdownHandlers(): void {
+    for (const { sig, handler } of this.signalHandlersRegistered) {
+      process.off(sig, handler);
+    }
+    this.signalHandlersRegistered = [];
+  }
+
   static async start(runtime: IAgentRuntime): Promise<ColonyService> {
     const service = new ColonyService(runtime);
     service.colonyConfig = loadColonyConfig(runtime);
@@ -213,6 +266,10 @@ export class ColonyService extends Service {
         selfCheck: service.colonyConfig.selfCheckEnabled,
         dailyLimit: service.colonyConfig.postDailyLimit,
         postType: service.colonyConfig.postDefaultType,
+        modelType: service.colonyConfig.postModelType,
+        scorerModelType: service.colonyConfig.scorerModelType,
+        bannedPatterns: service.colonyConfig.bannedPatterns,
+        logFormat: service.colonyConfig.logFormat,
       });
       await service.postClient.start();
     } else {
@@ -234,6 +291,10 @@ export class ColonyService extends Service {
         selfCheck: service.colonyConfig.selfCheckEnabled,
         threadComments: service.colonyConfig.engageThreadComments,
         requireTopicMatch: service.colonyConfig.engageRequireTopicMatch,
+        modelType: service.colonyConfig.engageModelType,
+        scorerModelType: service.colonyConfig.scorerModelType,
+        bannedPatterns: service.colonyConfig.bannedPatterns,
+        logFormat: service.colonyConfig.logFormat,
       });
       await service.engagementClient.start();
     } else {
@@ -246,6 +307,10 @@ export class ColonyService extends Service {
     // silently degrade quality or fail at first inference.
     void checkOllamaReadiness(runtime);
     validateCharacter(runtime);
+
+    if (service.colonyConfig.registerSignalHandlers) {
+      service.registerShutdownHandlers();
+    }
 
     return service;
   }
@@ -260,6 +325,7 @@ export class ColonyService extends Service {
     if (this.engagementClient) {
       await this.engagementClient.stop();
     }
+    this.unregisterShutdownHandlers();
     logger.info("Colony service stopped");
   }
 }

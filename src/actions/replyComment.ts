@@ -57,6 +57,10 @@ export const replyColonyAction: Action = {
       runtime,
       { body },
       service.colonyConfig.selfCheckEnabled,
+      {
+        bannedPatterns: service.colonyConfig.bannedPatterns,
+        modelType: service.colonyConfig.scorerModelType,
+      },
     );
     if (!check.ok) {
       service.incrementStat?.("selfCheckRejections");

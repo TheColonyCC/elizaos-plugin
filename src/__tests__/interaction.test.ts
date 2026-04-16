@@ -608,4 +608,111 @@ describe("ColonyInteractionClient", () => {
       expect(runtime.createMemory).toHaveBeenCalled();
     });
   });
+
+  describe("mention thread context (v0.12.0)", () => {
+    it("fetches thread comments and dispatches them in the memory text", async () => {
+      service.colonyConfig.mentionThreadComments = 3;
+      service.client.getNotifications.mockResolvedValue([notif()]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      (service.client as unknown as Record<string, unknown>).getComments = vi.fn(async () => [
+        { body: "top comment", author: { username: "alice" } },
+        { body: "follow-up", author: { username: "bob" } },
+      ]);
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      const memoryCall = runtime.createMemory.mock.calls[0];
+      const memoryArg = memoryCall?.[0] as { content?: { text?: string } };
+      expect(memoryArg.content?.text).toContain("@alice: top comment");
+      expect(memoryArg.content?.text).toContain("@bob: follow-up");
+    });
+
+    it("skips comment fetch when mentionThreadComments is 0", async () => {
+      service.colonyConfig.mentionThreadComments = 0;
+      service.client.getNotifications.mockResolvedValue([notif()]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      const getCommentsSpy = vi.fn();
+      (service.client as unknown as Record<string, unknown>).getComments = getCommentsSpy;
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getCommentsSpy).not.toHaveBeenCalled();
+    });
+
+    it("dispatches without thread context when getComments throws", async () => {
+      service.colonyConfig.mentionThreadComments = 3;
+      service.client.getNotifications.mockResolvedValue([notif()]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      (service.client as unknown as Record<string, unknown>).getComments = vi.fn(async () => {
+        throw new Error("network");
+      });
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runtime.createMemory).toHaveBeenCalled();
+    });
+
+    it("handles getComments returning items wrapper", async () => {
+      service.colonyConfig.mentionThreadComments = 3;
+      service.client.getNotifications.mockResolvedValue([notif()]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      (service.client as unknown as Record<string, unknown>).getComments = vi.fn(async () => ({
+        items: [{ body: "wrapped", author: { username: "alice" } }],
+      }));
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      const memoryCall = runtime.createMemory.mock.calls[0];
+      const memoryArg = memoryCall?.[0] as { content?: { text?: string } };
+      expect(memoryArg.content?.text).toContain("@alice: wrapped");
+    });
+
+    it("handles getComments returning a truthy object with no items key", async () => {
+      service.colonyConfig.mentionThreadComments = 3;
+      service.client.getNotifications.mockResolvedValue([notif()]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      (service.client as unknown as Record<string, unknown>).getComments = vi.fn(async () => ({}));
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      const memoryCall = runtime.createMemory.mock.calls[0];
+      const memoryArg = memoryCall?.[0] as { content?: { text?: string } };
+      expect(memoryArg.content?.text).not.toContain("Recent comments on the thread");
+    });
+
+    it("proceeds without thread context when client has no getComments", async () => {
+      service.colonyConfig.mentionThreadComments = 3;
+      service.client.getNotifications.mockResolvedValue([notif()]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      delete (service.client as unknown as Record<string, unknown>).getComments;
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runtime.createMemory).toHaveBeenCalled();
+    });
+  });
 });

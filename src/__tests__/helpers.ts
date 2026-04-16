@@ -83,7 +83,15 @@ export interface FakeService {
     engageRequireTopicMatch?: boolean;
     mentionMinKarma?: number;
     postDefaultType?: string;
+    mentionThreadComments?: number;
+    bannedPatterns?: RegExp[];
+    postModelType?: string;
+    engageModelType?: string;
+    scorerModelType?: string;
+    registerSignalHandlers?: boolean;
+    logFormat?: "text" | "json";
   };
+  cooldown?: ReturnType<typeof vi.fn>;
   incrementStat?: ReturnType<typeof vi.fn>;
   recordActivity?: ReturnType<typeof vi.fn>;
   refreshKarma?: ReturnType<typeof vi.fn>;
@@ -147,8 +155,16 @@ export function fakeService(
       engageRequireTopicMatch: false,
       mentionMinKarma: 0,
       postDefaultType: "discussion",
+      mentionThreadComments: 3,
+      bannedPatterns: [] as RegExp[],
+      postModelType: "TEXT_SMALL",
+      engageModelType: "TEXT_SMALL",
+      scorerModelType: "TEXT_SMALL",
+      registerSignalHandlers: false,
+      logFormat: "text" as "text" | "json",
       ...configOverrides,
     },
+    cooldown: vi.fn((ms: number) => Date.now() + ms),
     incrementStat: vi.fn(),
     recordActivity: vi.fn(),
     refreshKarma: vi.fn(async () => null),

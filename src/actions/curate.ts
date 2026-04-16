@@ -119,6 +119,9 @@ export const curateColonyFeedAction: Action = {
         title: post.title,
         body: post.body,
         author: post.author?.username,
+      }, {
+        bannedPatterns: service.colonyConfig.bannedPatterns,
+        modelType: service.colonyConfig.scorerModelType,
       });
 
       const title = (post.title ?? "").slice(0, 80);
@@ -132,7 +135,7 @@ export const curateColonyFeedAction: Action = {
         logger.info(
           `CURATE_COLONY_FEED: ${dryRun ? "[DRY RUN] would upvote" : "upvoted"} post ${post.id} (${title})`,
         );
-      } else if (score === "SPAM" || score === "INJECTION") {
+      } else if (score === "SPAM" || score === "INJECTION" || score === "BANNED") {
         const ok = dryRun || (await tryVote(service, post.id, -1));
         if (!ok) continue;
         votesCast++;

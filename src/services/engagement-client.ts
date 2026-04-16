@@ -36,6 +36,7 @@ import {
 import type { ColonyService } from "./colony.service.js";
 import { cleanGeneratedPost } from "./post-client.js";
 import { scorePost } from "./post-scorer.js";
+import { emitEvent } from "../utils/emitEvent.js";
 
 const CACHE_KEY_PREFIX = "colony/engagement-client/seen";
 const SEEN_RING_SIZE = 100;
@@ -71,6 +72,14 @@ export interface ColonyEngagementClientConfig {
    * post in the candidate window.
    */
   requireTopicMatch?: boolean;
+  /** `ModelType` for the generation call. Defaults to `TEXT_SMALL`. */
+  modelType?: string;
+  /** `ModelType` for the self-check scorer. Defaults to `TEXT_SMALL`. */
+  scorerModelType?: string;
+  /** Operator-supplied banned regex patterns. */
+  bannedPatterns?: RegExp[];
+  /** "text" | "json" — controls structured event output. */
+  logFormat?: "text" | "json";
 }
 
 type PostLike = {
@@ -211,8 +220,9 @@ export class ColonyEngagementClient {
 
     let generated: string;
     try {
+      const modelType = (this.config.modelType ?? ModelType.TEXT_SMALL) as never;
       generated = String(
-        await this.runtime.useModel(ModelType.TEXT_SMALL, {
+        await this.runtime.useModel(modelType, {
           prompt,
           temperature: this.config.temperature,
           maxTokens: this.config.maxTokens,
@@ -238,8 +248,11 @@ export class ColonyEngagementClient {
       const score = await scorePost(this.runtime, {
         title: `comment on ${candidate.title ?? candidate.id}`,
         body: content,
+      }, {
+        bannedPatterns: this.config.bannedPatterns,
+        modelType: this.config.scorerModelType,
       });
-      if (score === "SPAM" || score === "INJECTION") {
+      if (score === "SPAM" || score === "INJECTION" || score === "BANNED") {
         logger.warn(
           `🌐 COLONY_ENGAGEMENT_CLIENT: self-check rejected comment on ${candidate.id} as ${score}`,
         );
@@ -249,6 +262,12 @@ export class ColonyEngagementClient {
           candidate.id,
           `engagement client ${score}`,
         );
+        emitEvent(this.config.logFormat ?? "text", {
+          level: "warn",
+          event: "comment.self_check_rejected",
+          score,
+          postId: candidate.id,
+        }, `engagement self-check rejected ${candidate.id} as ${score}`);
         await this.markSeen(candidate.id);
         return;
       }
@@ -279,6 +298,14 @@ export class ColonyEngagementClient {
         candidate.id,
         `autoengage c/${colony}`,
       );
+      emitEvent(this.config.logFormat ?? "text", {
+        level: "info",
+        event: "comment.created",
+        postId: candidate.id,
+        colony,
+        bodyLength: content.length,
+        autonomous: true,
+      }, `engagement comment on ${candidate.id}`);
     } catch (err) {
       logger.warn(
         `COLONY_ENGAGEMENT_CLIENT: createComment(${candidate.id}) failed: ${String(err)}`,

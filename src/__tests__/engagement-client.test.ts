@@ -769,6 +769,48 @@ describe("ColonyEngagementClient", () => {
       expect(prompt).not.toContain("Recent comments on the thread");
       await c.stop();
     });
+
+    it("passes modelType to useModel for comment generation (v0.12.0)", async () => {
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p-model", title: "T", body: "B", author: { username: "a" } }],
+      });
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ modelType: "TEXT_LARGE" }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(runtime.useModel).toHaveBeenCalledWith("TEXT_LARGE", expect.any(Object));
+      await c.stop();
+    });
+
+    it("rejects BANNED content via self-check (v0.12.0)", async () => {
+      let i = 0;
+      runtime.useModel = vi.fn(async () => {
+        return ["Buy acme widgets", "SKIP"][i++] ?? "SKIP";
+      });
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p-banned", title: "T", body: "B", author: { username: "a" } }],
+      });
+      const c = new ColonyEngagementClient(service as never, runtime, config({
+        selfCheck: true,
+        bannedPatterns: [/acme/i],
+      }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.client.createComment).not.toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("emits JSON events when logFormat is 'json' (v0.12.0)", async () => {
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p-json", title: "T", body: "B", author: { username: "a" } }],
+      });
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ logFormat: "json" }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.client.createComment).toHaveBeenCalled();
+      await c.stop();
+    });
   });
 
   describe("topic-match filter (v0.11.0)", () => {

@@ -16,6 +16,10 @@ import { colonyStatusAction } from "./actions/status.js";
 import { colonyDiagnosticsAction } from "./actions/diagnostics.js";
 import { colonyRecentActivityAction } from "./actions/recentActivity.js";
 import { summarizeColonyThreadAction } from "./actions/summarizeThread.js";
+import { editColonyPostAction } from "./actions/editPost.js";
+import { deleteColonyPostAction, deleteColonyCommentAction } from "./actions/deletePost.js";
+import { colonyCooldownAction } from "./actions/cooldown.js";
+import { createColonyPollAction } from "./actions/createPoll.js";
 import { colonyFeedProvider } from "./providers/feed.js";
 import { getSetting } from "./utils/settings.js";
 
@@ -41,6 +45,11 @@ export const ColonyPlugin: Plugin = {
     colonyDiagnosticsAction,
     colonyRecentActivityAction,
     summarizeColonyThreadAction,
+    editColonyPostAction,
+    deleteColonyPostAction,
+    deleteColonyCommentAction,
+    colonyCooldownAction,
+    createColonyPollAction,
   ],
   providers: [colonyFeedProvider],
   init: async (_config: Record<string, string>, runtime: IAgentRuntime) => {
@@ -78,6 +87,13 @@ export { colonyStatusAction } from "./actions/status.js";
 export { colonyDiagnosticsAction } from "./actions/diagnostics.js";
 export { colonyRecentActivityAction } from "./actions/recentActivity.js";
 export { summarizeColonyThreadAction } from "./actions/summarizeThread.js";
+export { editColonyPostAction } from "./actions/editPost.js";
+export {
+  deleteColonyPostAction,
+  deleteColonyCommentAction,
+} from "./actions/deletePost.js";
+export { colonyCooldownAction } from "./actions/cooldown.js";
+export { createColonyPollAction } from "./actions/createPoll.js";
 export { colonyFeedProvider } from "./providers/feed.js";
 export {
   verifyAndDispatchWebhook,
@@ -96,10 +112,17 @@ export { ColonyInteractionClient } from "./services/interaction.js";
 export {
   scorePost,
   containsPromptInjection,
+  matchesBannedPattern,
   parseScore,
   selfCheckContent,
   type PostScore,
   type ScorablePost,
   type ScoreOptions,
 } from "./services/post-scorer.js";
+export {
+  emitEvent,
+  resolveLogFormat,
+  type PluginEvent,
+  type PluginEventLevel,
+} from "./utils/emitEvent.js";
 export { checkOllamaReadiness, validateCharacter } from "./utils/readiness.js";

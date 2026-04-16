@@ -21,7 +21,7 @@
 
 import { ModelType, type IAgentRuntime, logger } from "@elizaos/core";
 
-export type PostScore = "EXCELLENT" | "SPAM" | "INJECTION" | "SKIP";
+export type PostScore = "EXCELLENT" | "SPAM" | "INJECTION" | "BANNED" | "SKIP";
 
 export interface ScorablePost {
   title?: string;
@@ -32,6 +32,19 @@ export interface ScorablePost {
 export interface ScoreOptions {
   temperature?: number;
   maxTokens?: number;
+  /**
+   * Operator-supplied regex patterns. Content matching any pattern is
+   * classified as BANNED without an LLM round-trip. Use for fine-grained
+   * deny-list rules (specific company names, banned topics, tracked URL
+   * shorteners, etc.) that the SPAM/INJECTION classifier wouldn't catch.
+   */
+  bannedPatterns?: RegExp[];
+  /**
+   * Override the ModelType for the LLM scoring call. Defaults to TEXT_SMALL.
+   * Operators can point this at TEXT_LARGE for more accurate classification
+   * at higher cost.
+   */
+  modelType?: string;
 }
 
 /**
@@ -50,12 +63,17 @@ export async function scorePost(
     return "INJECTION";
   }
 
+  if (options.bannedPatterns?.length && matchesBannedPattern(post, options.bannedPatterns)) {
+    return "BANNED";
+  }
+
   const prompt = buildScorePrompt(post);
+  const modelType = options.modelType ?? ModelType.TEXT_SMALL;
 
   let raw: string;
   try {
     raw = String(
-      await runtime.useModel(ModelType.TEXT_SMALL, {
+      await runtime.useModel(modelType as never, {
         prompt,
         temperature: options.temperature ?? 0.1,
         maxTokens: options.maxTokens ?? 20,
@@ -67,6 +85,20 @@ export async function scorePost(
   }
 
   return parseScore(raw);
+}
+
+/**
+ * Returns true if any operator-supplied deny-list pattern matches the
+ * post's title or body. Patterns are checked as-is (the caller has
+ * already compiled them as case-insensitive regexes if desired).
+ */
+export function matchesBannedPattern(
+  post: ScorablePost,
+  patterns: RegExp[],
+): boolean {
+  const haystack = [post.title ?? "", post.body ?? ""].filter(Boolean).join("\n");
+  if (!haystack.trim()) return false;
+  return patterns.some((re) => re.test(haystack));
 }
 
 const INJECTION_PATTERNS: RegExp[] = [
@@ -129,6 +161,7 @@ export function parseScore(raw: string): PostScore {
   if (!upper.trim()) return "SKIP";
   // Check INJECTION first because "INJECTION" contains no other labels as substrings.
   if (/\bINJECTION\b/.test(upper)) return "INJECTION";
+  if (/\bBANNED\b/.test(upper)) return "BANNED";
   if (/\bEXCELLENT\b/.test(upper)) return "EXCELLENT";
   if (/\bSPAM\b/.test(upper)) return "SPAM";
   return "SKIP";
@@ -144,11 +177,18 @@ export async function selfCheckContent(
   runtime: IAgentRuntime,
   post: ScorablePost,
   selfCheckEnabled: boolean,
+  options: ScoreOptions = {},
 ): Promise<{ ok: boolean; score: PostScore | "DISABLED" }> {
+  // Deny-list patterns apply even when the LLM scorer is disabled, so
+  // operators can enforce hard content rules without also paying for
+  // classification on every write.
+  if (options.bannedPatterns?.length && matchesBannedPattern(post, options.bannedPatterns)) {
+    return { ok: false, score: "BANNED" };
+  }
   if (!selfCheckEnabled) return { ok: true, score: "DISABLED" };
-  const score = await scorePost(runtime, post);
+  const score = await scorePost(runtime, post, options);
   return {
-    ok: score !== "SPAM" && score !== "INJECTION",
+    ok: score !== "SPAM" && score !== "INJECTION" && score !== "BANNED",
     score,
   };
 }

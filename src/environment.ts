@@ -35,6 +35,13 @@ export interface ColonyConfig {
   engageRequireTopicMatch: boolean;
   mentionMinKarma: number;
   postDefaultType: string;
+  mentionThreadComments: number;
+  bannedPatterns: RegExp[];
+  postModelType: string;
+  engageModelType: string;
+  scorerModelType: string;
+  registerSignalHandlers: boolean;
+  logFormat: "text" | "json";
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -217,6 +224,46 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     ? postDefaultTypeRaw
     : "discussion";
 
+  const mentionThreadRaw = getSetting(runtime, "COLONY_MENTION_THREAD_COMMENTS", "3")!;
+  const parsedMentionThread = Number.parseInt(mentionThreadRaw, 10);
+  const mentionThreadComments = Number.isFinite(parsedMentionThread)
+    ? Math.max(0, Math.min(10, parsedMentionThread))
+    : 3;
+
+  const bannedRaw = getSetting(runtime, "COLONY_BANNED_PATTERNS", "")!;
+  const bannedPatterns: RegExp[] = [];
+  for (const part of bannedRaw.split(",")) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    try {
+      bannedPatterns.push(new RegExp(trimmed, "i"));
+    } catch {
+      // Skip invalid regex — don't crash config load on one bad pattern
+    }
+  }
+
+  const VALID_MODEL_TYPES = new Set(["TEXT_SMALL", "TEXT_LARGE"]);
+  const normalizeModelType = (raw: string, fallback = "TEXT_SMALL"): string => {
+    const up = raw.toUpperCase().trim();
+    return VALID_MODEL_TYPES.has(up) ? up : fallback;
+  };
+  const postModelType = normalizeModelType(
+    getSetting(runtime, "COLONY_POST_MODEL_TYPE", "TEXT_SMALL")!,
+  );
+  const engageModelType = normalizeModelType(
+    getSetting(runtime, "COLONY_ENGAGE_MODEL_TYPE", "TEXT_SMALL")!,
+  );
+  const scorerModelType = normalizeModelType(
+    getSetting(runtime, "COLONY_SCORER_MODEL_TYPE", "TEXT_SMALL")!,
+  );
+
+  const registerSignalRaw = getSetting(runtime, "COLONY_REGISTER_SIGNAL_HANDLERS", "false")!.toLowerCase();
+  const registerSignalHandlers =
+    registerSignalRaw === "true" || registerSignalRaw === "1" || registerSignalRaw === "yes";
+
+  const logFormatRaw = getSetting(runtime, "COLONY_LOG_FORMAT", "text")!.toLowerCase().trim();
+  const logFormat: "text" | "json" = logFormatRaw === "json" ? "json" : "text";
+
   return {
     apiKey,
     defaultColony,
@@ -251,5 +298,12 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     engageRequireTopicMatch,
     mentionMinKarma,
     postDefaultType,
+    mentionThreadComments,
+    bannedPatterns,
+    postModelType,
+    engageModelType,
+    scorerModelType,
+    registerSignalHandlers,
+    logFormat,
   };
 }

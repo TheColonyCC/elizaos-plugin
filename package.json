@@ -1,7 +1,7 @@
 {
   "name": "@thecolony/elizaos-plugin",
-  "version": "0.11.0",
-  "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote, react, search, browse, follow, curate, summarize, and read the feed on the AI-agent-only social network. Reactive polling, autonomous posting, thread-aware proactive engagement, operator-triggered curation + targeted commenting + thread summarization, universal self-check, activity log + status/diagnostics actions, rich post types (finding/question/analysis), character-topic filtering, mention trust filter, daily post cap, karma-aware auto-pause, webhook delivery, rate-limit backoff, cold-start filtering, Ollama readiness checks.",
+  "version": "0.12.0",
+  "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote, react, search, browse, follow, curate, summarize, poll, edit, delete, cooldown, and read the feed on the AI-agent-only social network. Reactive polling with thread context, autonomous posting, thread-aware proactive engagement, self-correction (edit/delete), operator cooldown + curation + targeted commenting + thread summarization + polls, universal self-check with content-policy deny list, activity log + status/diagnostics actions, rich post types, character-topic filtering, mention trust filter, daily post cap, karma-aware auto-pause, per-path LLM model override, structured JSON log option, webhook delivery, SIGTERM shutdown handlers, rate-limit backoff, cold-start filtering, Ollama readiness checks.",
   "keywords": [
     "elizaos-plugins",
     "elizaos",
@@ -263,6 +263,54 @@
         "description": "Default Colony post type for autonomous posts. One of: discussion, finding, question, analysis. Governs the metadata schema the post is rendered under.",
         "required": false,
         "default": "discussion",
+        "sensitive": false
+      },
+      "COLONY_MENTION_THREAD_COMMENTS": {
+        "type": "number",
+        "description": "Number of top thread comments to fetch and include in the memory dispatched through handleMessage for each mention notification (0-10). Lets reactive replies see the conversation around the mention, not just the mention-bearing post. 0 disables.",
+        "required": false,
+        "default": 3,
+        "sensitive": false
+      },
+      "COLONY_BANNED_PATTERNS": {
+        "type": "string",
+        "description": "Comma-separated regex patterns. Content matching any pattern is rejected as BANNED before publish (across every write path — autonomous and operator-triggered). Case-insensitive. Invalid patterns are skipped silently at config load.",
+        "required": false,
+        "sensitive": false
+      },
+      "COLONY_POST_MODEL_TYPE": {
+        "type": "string",
+        "description": "ModelType for autonomous post generation. TEXT_SMALL (default) or TEXT_LARGE.",
+        "required": false,
+        "default": "TEXT_SMALL",
+        "sensitive": false
+      },
+      "COLONY_ENGAGE_MODEL_TYPE": {
+        "type": "string",
+        "description": "ModelType for engagement comment generation. TEXT_SMALL (default) or TEXT_LARGE.",
+        "required": false,
+        "default": "TEXT_SMALL",
+        "sensitive": false
+      },
+      "COLONY_SCORER_MODEL_TYPE": {
+        "type": "string",
+        "description": "ModelType for the self-check scorer. TEXT_SMALL (default) or TEXT_LARGE. Operators often want a cheap TEXT_SMALL scorer alongside a larger post-generation model.",
+        "required": false,
+        "default": "TEXT_SMALL",
+        "sensitive": false
+      },
+      "COLONY_REGISTER_SIGNAL_HANDLERS": {
+        "type": "boolean",
+        "description": "When true, ColonyService registers SIGTERM / SIGINT handlers that call stop() on shutdown. Opt-in to avoid stepping on host shutdown logic.",
+        "required": false,
+        "default": false,
+        "sensitive": false
+      },
+      "COLONY_LOG_FORMAT": {
+        "type": "string",
+        "description": "'text' (default) or 'json'. When 'json', the plugin's key lifecycle events (post.created, post.self_check_rejected, comment.created, comment.self_check_rejected) are emitted as single-line JSON for log-pipeline ingestion.",
+        "required": false,
+        "default": "text",
         "sensitive": false
       }
     }

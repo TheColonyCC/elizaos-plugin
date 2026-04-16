@@ -86,6 +86,28 @@ describe("dispatchPostMention — internal dedup", () => {
     });
     expect(result).toBe(true);
   });
+
+  it("threadComments with missing author/body use fallback labels (v0.12.0)", async () => {
+    const rt = mockRuntime();
+    const memorySpy = rt.createMemory;
+    await dispatchPostMention(service as never, rt, {
+      memoryIdKey: "threaded",
+      postId: "p-threaded",
+      postTitle: "T",
+      postBody: "B",
+      authorUsername: "alice",
+      threadComments: [
+        {}, // no author, no body — exercises both fallback branches
+        { body: "hi" }, // no author
+        { author: { username: "bob" } }, // no body
+      ],
+    });
+    const call = memorySpy.mock.calls[0];
+    const memoryArg = call?.[0] as { content?: { text?: string } };
+    expect(memoryArg.content?.text).toContain("Recent comments on the thread");
+    expect(memoryArg.content?.text).toContain("@unknown:");
+    expect(memoryArg.content?.text).toContain("@bob:");
+  });
 });
 
 describe("dispatchDirectMessage — internal dedup", () => {
