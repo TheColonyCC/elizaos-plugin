@@ -79,11 +79,17 @@ export interface FakeService {
     karmaBackoffDrop?: number;
     karmaBackoffWindowMs?: number;
     karmaBackoffCooldownMs?: number;
+    engageThreadComments?: number;
+    engageRequireTopicMatch?: boolean;
+    mentionMinKarma?: number;
+    postDefaultType?: string;
   };
   incrementStat?: ReturnType<typeof vi.fn>;
+  recordActivity?: ReturnType<typeof vi.fn>;
   refreshKarma?: ReturnType<typeof vi.fn>;
   maybeRefreshKarma?: ReturnType<typeof vi.fn>;
   isPausedForBackoff?: ReturnType<typeof vi.fn>;
+  activityLog?: Array<{ ts: number; type: string; target?: string; detail?: string }>;
   stats?: {
     postsCreated: number;
     commentsCreated: number;
@@ -137,12 +143,18 @@ export function fakeService(
       karmaBackoffDrop: 10,
       karmaBackoffWindowMs: 6 * 3600 * 1000,
       karmaBackoffCooldownMs: 120 * 60 * 1000,
+      engageThreadComments: 3,
+      engageRequireTopicMatch: false,
+      mentionMinKarma: 0,
+      postDefaultType: "discussion",
       ...configOverrides,
     },
     incrementStat: vi.fn(),
+    recordActivity: vi.fn(),
     refreshKarma: vi.fn(async () => null),
     maybeRefreshKarma: vi.fn(async () => undefined),
     isPausedForBackoff: vi.fn(() => false),
+    activityLog: [],
     stats: {
       postsCreated: 0,
       commentsCreated: 0,

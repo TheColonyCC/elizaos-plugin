@@ -19,6 +19,25 @@ export interface KarmaSnapshot {
   karma: number;
 }
 
+export type ActivityType =
+  | "post_created"
+  | "comment_created"
+  | "vote_cast"
+  | "self_check_rejection"
+  | "curation_run"
+  | "backoff_triggered"
+  | "dry_run_post"
+  | "dry_run_comment";
+
+export interface ActivityEntry {
+  ts: number;
+  type: ActivityType;
+  target?: string;
+  detail?: string;
+}
+
+const ACTIVITY_RING_SIZE = 50;
+
 export class ColonyService extends Service {
   static serviceType = "colony";
 
@@ -44,6 +63,7 @@ export class ColonyService extends Service {
 
   public karmaHistory: KarmaSnapshot[] = [];
   public pausedUntilTs = 0;
+  public activityLog: ActivityEntry[] = [];
 
   constructor(runtime?: IAgentRuntime) {
     super(runtime);
@@ -93,6 +113,11 @@ export class ColonyService extends Service {
           this.colonyConfig.karmaBackoffCooldownMs / 60_000,
         )}min`,
       );
+      this.recordActivity(
+        "backoff_triggered",
+        undefined,
+        `karma ${max}→${latest} (−${drop}) in ${Math.round(this.colonyConfig.karmaBackoffWindowMs / 3600_000)}h`,
+      );
     }
   }
 
@@ -113,6 +138,18 @@ export class ColonyService extends Service {
   incrementStat<K extends keyof ColonyServiceStats>(key: K): void {
     if (key === "startedAt") return;
     this.stats = { ...this.stats, [key]: (this.stats[key] as number) + 1 };
+  }
+
+  /**
+   * Record an activity entry into the rolling ring buffer. Used by every
+   * write path so operators can inspect what the agent actually did via the
+   * `COLONY_RECENT_ACTIVITY` action, without grepping logs.
+   */
+  recordActivity(type: ActivityType, target?: string, detail?: string): void {
+    const entry: ActivityEntry = { ts: Date.now(), type };
+    if (target !== undefined) entry.target = target;
+    if (detail !== undefined) entry.detail = detail;
+    this.activityLog = [...this.activityLog, entry].slice(-ACTIVITY_RING_SIZE);
   }
 
   /**
@@ -175,6 +212,7 @@ export class ColonyService extends Service {
         dryRun: service.colonyConfig.dryRun,
         selfCheck: service.colonyConfig.selfCheckEnabled,
         dailyLimit: service.colonyConfig.postDailyLimit,
+        postType: service.colonyConfig.postDefaultType,
       });
       await service.postClient.start();
     } else {
@@ -194,6 +232,8 @@ export class ColonyService extends Service {
         styleHint: service.colonyConfig.engageStyleHint,
         dryRun: service.colonyConfig.dryRun,
         selfCheck: service.colonyConfig.selfCheckEnabled,
+        threadComments: service.colonyConfig.engageThreadComments,
+        requireTopicMatch: service.colonyConfig.engageRequireTopicMatch,
       });
       await service.engagementClient.start();
     } else {

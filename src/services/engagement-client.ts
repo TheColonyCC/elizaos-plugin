@@ -58,6 +58,19 @@ export interface ColonyEngagementClientConfig {
    * marked seen so we don't retry it.
    */
   selfCheck?: boolean;
+  /**
+   * Number of top thread comments to pull alongside the candidate post and
+   * include in the generation prompt. Lets the agent join a mid-thread
+   * conversation instead of only replying to the OP. 0 disables.
+   */
+  threadComments?: number;
+  /**
+   * When true, a candidate post must match at least one of the character's
+   * `topics` (cheap substring check on title + body) before being passed to
+   * `useModel`. Stops the engagement client from firing on every recent
+   * post in the candidate window.
+   */
+  requireTopicMatch?: boolean;
 }
 
 type PostLike = {
@@ -65,6 +78,13 @@ type PostLike = {
   title?: string;
   body?: string;
   author?: { username?: string };
+};
+
+type CommentLike = {
+  id?: string;
+  body?: string;
+  author?: { username?: string };
+  score?: number;
 };
 
 export class ColonyEngagementClient {
@@ -173,7 +193,17 @@ export class ColonyEngagementClient {
       return;
     }
 
-    const prompt = this.buildPrompt(colony, candidate);
+    if (this.config.requireTopicMatch && !this.candidateMatchesCharacterTopics(candidate)) {
+      logger.debug(
+        `COLONY_ENGAGEMENT_CLIENT: candidate ${candidate.id} in c/${colony} does not match character topics, skipping`,
+      );
+      await this.markSeen(candidate.id);
+      return;
+    }
+
+    const threadComments = await this.fetchThreadComments(candidate.id);
+
+    const prompt = this.buildPrompt(colony, candidate, threadComments);
     if (!prompt) {
       await this.markSeen(candidate.id);
       return;
@@ -214,6 +244,11 @@ export class ColonyEngagementClient {
           `🌐 COLONY_ENGAGEMENT_CLIENT: self-check rejected comment on ${candidate.id} as ${score}`,
         );
         this.service.incrementStat?.("selfCheckRejections");
+        this.service.recordActivity?.(
+          "self_check_rejection",
+          candidate.id,
+          `engagement client ${score}`,
+        );
         await this.markSeen(candidate.id);
         return;
       }
@@ -224,6 +259,11 @@ export class ColonyEngagementClient {
         `🌐 COLONY_ENGAGEMENT_CLIENT [DRY RUN] would comment on post ${candidate.id} in c/${colony}: ${content.slice(0, 80)}... (${content.length} chars)`,
       );
       await this.markSeen(candidate.id);
+      this.service.recordActivity?.(
+        "dry_run_comment",
+        candidate.id,
+        `c/${colony}: ${content.slice(0, 50)}`,
+      );
       return;
     }
 
@@ -234,6 +274,11 @@ export class ColonyEngagementClient {
       );
       await this.markSeen(candidate.id);
       this.service.incrementStat?.("commentsCreated");
+      this.service.recordActivity?.(
+        "comment_created",
+        candidate.id,
+        `autoengage c/${colony}`,
+      );
     } catch (err) {
       logger.warn(
         `COLONY_ENGAGEMENT_CLIENT: createComment(${candidate.id}) failed: ${String(err)}`,
@@ -241,7 +286,11 @@ export class ColonyEngagementClient {
     }
   }
 
-  private buildPrompt(colony: string, post: PostLike): string | null {
+  private buildPrompt(
+    colony: string,
+    post: PostLike,
+    threadComments: CommentLike[] = [],
+  ): string | null {
     const character = this.runtime.character as unknown as {
       name?: string;
       bio?: string | string[];
@@ -265,6 +314,18 @@ export class ColonyEngagementClient {
     const title = post.title ?? "(untitled)";
     const body = (post.body ?? "").slice(0, 1500);
 
+    const threadContext = threadComments.length
+      ? [
+          "",
+          `Recent comments on the thread (${threadComments.length}):`,
+          ...threadComments.map((c, i) => {
+            const commenter = c.author?.username ?? "unknown";
+            const text = (c.body ?? "").slice(0, 500);
+            return `${i + 1}. @${commenter}: ${text}`;
+          }),
+        ]
+      : [];
+
     return [
       `You are ${character.name}, an AI agent on The Colony (thecolony.cc).`,
       bio ? `Background: ${bio}` : "",
@@ -277,8 +338,12 @@ export class ColonyEngagementClient {
       `Post by @${author} — "${title}"`,
       "",
       body,
+      ...threadContext,
       "",
-      "Task: Write a short-form comment (2-4 sentences) replying to this post. Substantive only — add information, a specific observation, a concrete question, or a correction. Do NOT restate the post. Do NOT thank the author. Do NOT say \"interesting\" or \"great point\".",
+      threadComments.length
+        ? "Task: Write a short-form comment (2-4 sentences) that advances the conversation. Reply to the thread as a whole, not just the OP — you can engage with or build on what specific commenters said. Substantive only."
+        : "Task: Write a short-form comment (2-4 sentences) replying to this post. Substantive only — add information, a specific observation, a concrete question, or a correction.",
+      "Do NOT restate the post. Do NOT thank the author. Do NOT say \"interesting\" or \"great point\".",
       "If you have nothing substantive to add, output exactly SKIP on a single line.",
       this.config.styleHint
         ? `Additional style guidance: ${this.config.styleHint}`
@@ -287,6 +352,50 @@ export class ColonyEngagementClient {
     ]
       .filter(Boolean)
       .join("\n");
+  }
+
+  /**
+   * Fetch up to `threadComments` top-level comments on a candidate post to
+   * include in the engagement prompt. Best-effort: if the SDK call fails or
+   * the post has no comments, returns an empty array (prompt still builds).
+   */
+  private async fetchThreadComments(postId: string): Promise<CommentLike[]> {
+    const count = this.config.threadComments ?? 3;
+    if (count <= 0) return [];
+    const client = this.service.client as unknown as {
+      getComments?: (id: string, page?: number) => Promise<unknown>;
+    };
+    if (typeof client.getComments !== "function") return [];
+    try {
+      const result = await client.getComments(postId, 1);
+      const items = Array.isArray(result)
+        ? (result as CommentLike[])
+        : ((result as { items?: CommentLike[] })?.items ?? []);
+      return items.slice(0, count);
+    } catch (err) {
+      logger.debug(
+        `COLONY_ENGAGEMENT_CLIENT: getComments(${postId}) failed, proceeding without thread context: ${String(err)}`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Cheap, LLM-free relevance filter — true iff any character.topic appears
+   * (case-insensitive substring) in the candidate's title or body.
+   */
+  private candidateMatchesCharacterTopics(post: PostLike): boolean {
+    const character = this.runtime.character as unknown as {
+      topics?: string[];
+    } | null;
+    const topics = character?.topics ?? [];
+    if (!topics.length) return true; // No topics configured → don't filter
+    const haystack = `${post.title ?? ""} ${post.body ?? ""}`.toLowerCase();
+    if (!haystack.trim()) return false;
+    return topics.some((t) => {
+      const needle = t.toLowerCase().trim();
+      return needle.length > 0 && haystack.includes(needle);
+    });
   }
 
   private cacheKey(): string {

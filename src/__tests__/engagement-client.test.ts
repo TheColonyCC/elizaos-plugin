@@ -601,7 +601,7 @@ describe("ColonyEngagementClient", () => {
       await c.stop();
     });
 
-    it("scores with post id when candidate has no title", async () => {
+    it("scores with post id when candidate has no title (baseline)", async () => {
       let i = 0;
       runtime.useModel = vi.fn(async () => {
         const out = ["A reply.", "SKIP"][i++] ?? "SKIP";
@@ -617,6 +617,260 @@ describe("ColonyEngagementClient", () => {
       // Scorer prompt uses post id when title missing
       const scorerPrompt = runtime.useModel.mock.calls[1][1].prompt as string;
       expect(scorerPrompt).toContain("no-title-post");
+      await c.stop();
+    });
+  });
+
+  describe("thread-aware engagement (v0.11.0)", () => {
+    it("fetches thread comments and includes them in the prompt", async () => {
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p1", title: "T", body: "B", author: { username: "a" } }],
+      });
+      (service.client as unknown as Record<string, unknown>).getComments = vi.fn(async () => [
+        { body: "comment from bob", author: { username: "bob" } },
+        { body: "comment from carol", author: { username: "carol" } },
+      ]);
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ threadComments: 5 }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(prompt).toContain("Recent comments on the thread");
+      expect(prompt).toContain("@bob: comment from bob");
+      expect(prompt).toContain("@carol: comment from carol");
+      expect(prompt).toContain("advances the conversation");
+      await c.stop();
+    });
+
+    it("caps thread comments at threadComments", async () => {
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p2", title: "T", body: "B", author: { username: "a" } }],
+      });
+      const manyComments = Array.from({ length: 10 }, (_, i) => ({
+        body: `c${i}`, author: { username: "u" },
+      }));
+      (service.client as unknown as Record<string, unknown>).getComments = vi.fn(async () => manyComments);
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ threadComments: 2 }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(prompt).toContain("@u: c0");
+      expect(prompt).toContain("@u: c1");
+      expect(prompt).not.toContain("@u: c2");
+      await c.stop();
+    });
+
+    it("skips comment fetch when threadComments is 0", async () => {
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p3", title: "T", body: "B", author: { username: "a" } }],
+      });
+      const getCommentsSpy = vi.fn();
+      (service.client as unknown as Record<string, unknown>).getComments = getCommentsSpy;
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ threadComments: 0 }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(getCommentsSpy).not.toHaveBeenCalled();
+      const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(prompt).not.toContain("Recent comments on the thread");
+      await c.stop();
+    });
+
+    it("degrades gracefully when getComments throws", async () => {
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p4", title: "T", body: "B", author: { username: "a" } }],
+      });
+      (service.client as unknown as Record<string, unknown>).getComments = vi.fn(async () => {
+        throw new Error("network");
+      });
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ threadComments: 3 }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      // Still calls createComment even though thread context failed
+      expect(service.client.createComment).toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("handles getComments returning an items wrapper", async () => {
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p5", title: "T", body: "B", author: { username: "a" } }],
+      });
+      (service.client as unknown as Record<string, unknown>).getComments = vi.fn(async () => ({
+        items: [{ body: "wrapped comment", author: { username: "dave" } }],
+      }));
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ threadComments: 3 }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(prompt).toContain("@dave: wrapped comment");
+      await c.stop();
+    });
+
+    it("proceeds with empty thread context when client has no getComments", async () => {
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p6", title: "T", body: "B", author: { username: "a" } }],
+      });
+      // Ensure no getComments on client
+      delete (service.client as unknown as Record<string, unknown>).getComments;
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ threadComments: 3 }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(prompt).not.toContain("Recent comments on the thread");
+      await c.stop();
+    });
+
+    it("handles author field missing on thread comment", async () => {
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p-anon", title: "T", body: "B", author: { username: "a" } }],
+      });
+      (service.client as unknown as Record<string, unknown>).getComments = vi.fn(async () => [
+        { body: "anonymous comment" },
+      ]);
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ threadComments: 3 }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(prompt).toContain("@unknown: anonymous comment");
+      await c.stop();
+    });
+
+    it("handles body field missing on thread comment", async () => {
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p-bodiless", title: "T", body: "B", author: { username: "a" } }],
+      });
+      (service.client as unknown as Record<string, unknown>).getComments = vi.fn(async () => [
+        { author: { username: "bob" } }, // no body field
+      ]);
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ threadComments: 3 }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(prompt).toContain("@bob:");
+      await c.stop();
+    });
+
+    it("treats truthy non-array getComments response with no items as empty", async () => {
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p-empty-items", title: "T", body: "B", author: { username: "a" } }],
+      });
+      (service.client as unknown as Record<string, unknown>).getComments = vi.fn(async () => ({}));
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ threadComments: 3 }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(prompt).not.toContain("Recent comments on the thread");
+      await c.stop();
+    });
+  });
+
+  describe("topic-match filter (v0.11.0)", () => {
+    it("skips candidates that don't match any character topic", async () => {
+      runtime.character.topics = ["multi-agent coordination", "LLM infrastructure"];
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "off-topic", title: "Pizza recipes", body: "I love pizza", author: { username: "a" } }],
+      });
+      const c = new ColonyEngagementClient(service as never, runtime, config({ requireTopicMatch: true }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(runtime.useModel).not.toHaveBeenCalled();
+      expect(service.client.createComment).not.toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("proceeds for candidates matching a character topic (case-insensitive)", async () => {
+      runtime.character.topics = ["Agent COORDINATION", "LLM infrastructure"];
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "on-topic", title: "Agent Coordination is hard", body: "x", author: { username: "a" } }],
+      });
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ requireTopicMatch: true }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(runtime.useModel).toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("matches against the body as well as the title", async () => {
+      runtime.character.topics = ["inference"];
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "body-match", title: "Vague title", body: "but the body talks about inference speed", author: { username: "a" } }],
+      });
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ requireTopicMatch: true }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(runtime.useModel).toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("disabled filter (default) passes everything", async () => {
+      runtime.character.topics = ["multi-agent coordination"];
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "off-topic-2", title: "Pizza recipes", body: "Pizza.", author: { username: "a" } }],
+      });
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ requireTopicMatch: false }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(runtime.useModel).toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("passes when character has no topics at all (no filtering signal)", async () => {
+      runtime.character.topics = undefined;
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "no-topic-char", title: "Pizza", body: "x", author: { username: "a" } }],
+      });
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ requireTopicMatch: true }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(runtime.useModel).toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("skips when title and body are empty (nothing to match against)", async () => {
+      runtime.character.topics = ["some-topic"];
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "empty", title: "", body: "", author: { username: "a" } }],
+      });
+      const c = new ColonyEngagementClient(service as never, runtime, config({ requireTopicMatch: true }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(runtime.useModel).not.toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("skips when title and body are undefined (nullish fallback)", async () => {
+      runtime.character.topics = ["some-topic"];
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "undef-fields", author: { username: "a" } }],
+      });
+      const c = new ColonyEngagementClient(service as never, runtime, config({ requireTopicMatch: true }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(runtime.useModel).not.toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("ignores empty-string topics in the character list", async () => {
+      runtime.character.topics = ["", "   ", "inference"];
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "mixed", title: "No match", body: "nothing relevant", author: { username: "a" } }],
+      });
+      const c = new ColonyEngagementClient(service as never, runtime, config({ requireTopicMatch: true }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      // Empty-string topic shouldn't match everything
+      expect(runtime.useModel).not.toHaveBeenCalled();
       await c.stop();
     });
   });

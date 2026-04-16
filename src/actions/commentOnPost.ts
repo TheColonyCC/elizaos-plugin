@@ -145,6 +145,7 @@ export const commentOnColonyPostAction: Action = {
     );
     if (!check.ok) {
       service.incrementStat?.("selfCheckRejections");
+      service.recordActivity?.("self_check_rejection", postId, `COMMENT_ON_COLONY_POST ${check.score}`);
       logger.warn(
         `COMMENT_ON_COLONY_POST: self-check rejected generated body as ${check.score}`,
       );
@@ -169,6 +170,7 @@ export const commentOnColonyPostAction: Action = {
         `COMMENT_ON_COLONY_POST: commented on post ${postId} (${body.length} chars)`,
       );
       service.incrementStat?.("commentsCreated");
+      service.recordActivity?.("comment_created", postId, `targeted comment on ${postId.slice(0, 8)}`);
       callback?.({
         text: `Commented on https://thecolony.cc/post/${postId}`,
         action: "COMMENT_ON_COLONY_POST",

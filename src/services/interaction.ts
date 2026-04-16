@@ -247,6 +247,22 @@ export class ColonyInteractionClient {
       return;
     }
 
+    const minKarma = this.service.colonyConfig.mentionMinKarma;
+    const notifType = (notification.notification_type ?? "").toLowerCase();
+    if (minKarma > 0 && notifType === "mention") {
+      const authorUsername = post.author?.username;
+      if (authorUsername) {
+        const karma = await this.fetchUserKarma(authorUsername);
+        if (karma !== null && karma < minKarma) {
+          logger.info(
+            `COLONY_INTERACTION: skipping mention from @${authorUsername} (karma ${karma} < ${minKarma} threshold)`,
+          );
+          await this.markRead(notification.id);
+          return;
+        }
+      }
+    }
+
     await dispatchPostMention(this.service, this.runtime, {
       memoryIdKey,
       postId: notification.post_id,
@@ -257,6 +273,25 @@ export class ColonyInteractionClient {
     });
 
     await this.markRead(notification.id);
+  }
+
+  /**
+   * Fetch a user's karma via `client.getUser(username)`. Returns null if
+   * the lookup fails — we fail open (dispatch as usual) rather than silently
+   * drop a legitimate mention because of a transient API error.
+   */
+  private async fetchUserKarma(username: string): Promise<number | null> {
+    try {
+      const user = (await (this.service.client as unknown as {
+        getUser: (u: string) => Promise<{ karma?: number }>;
+      }).getUser(username));
+      return typeof user?.karma === "number" ? user.karma : null;
+    } catch (err) {
+      logger.debug(
+        `COLONY_INTERACTION: getUser(@${username}) failed, allowing dispatch: ${String(err)}`,
+      );
+      return null;
+    }
   }
 
   private async markRead(notificationId: string): Promise<void> {

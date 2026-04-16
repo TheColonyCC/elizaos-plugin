@@ -467,4 +467,145 @@ describe("ColonyInteractionClient", () => {
     await vi.advanceTimersByTimeAsync(0);
     await c.stop();
   });
+
+  describe("mention trust filter (v0.11.0)", () => {
+    it("skips a mention when author karma is below the threshold", async () => {
+      service.colonyConfig.mentionMinKarma = 5;
+      service.client.getNotifications.mockResolvedValue([
+        notif({ notification_type: "mention", post_id: "p-low" }),
+      ]);
+      service.client.getPost.mockResolvedValue({
+        id: "p-low",
+        title: "T",
+        body: "B",
+        author: { username: "lowkarma" },
+      });
+      (service.client as unknown as Record<string, unknown>).getUser = vi.fn(async () => ({
+        username: "lowkarma",
+        karma: 2,
+      }));
+
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(runtime.createMemory).not.toHaveBeenCalled();
+      expect(service.client.markNotificationRead).toHaveBeenCalledWith("notif-1");
+    });
+
+    it("dispatches when author karma meets the threshold", async () => {
+      service.colonyConfig.mentionMinKarma = 5;
+      service.client.getNotifications.mockResolvedValue([
+        notif({ notification_type: "mention" }),
+      ]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "gooduser" },
+      });
+      (service.client as unknown as Record<string, unknown>).getUser = vi.fn(async () => ({
+        username: "gooduser",
+        karma: 50,
+      }));
+
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runtime.createMemory).toHaveBeenCalled();
+    });
+
+    it("fails open when getUser throws (still dispatches)", async () => {
+      service.colonyConfig.mentionMinKarma = 5;
+      service.client.getNotifications.mockResolvedValue([
+        notif({ notification_type: "mention" }),
+      ]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "flaky" },
+      });
+      (service.client as unknown as Record<string, unknown>).getUser = vi.fn(async () => {
+        throw new Error("api down");
+      });
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runtime.createMemory).toHaveBeenCalled();
+    });
+
+    it("fails open when getUser returns no karma field", async () => {
+      service.colonyConfig.mentionMinKarma = 5;
+      service.client.getNotifications.mockResolvedValue([
+        notif({ notification_type: "mention" }),
+      ]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "noKarmaField" },
+      });
+      (service.client as unknown as Record<string, unknown>).getUser = vi.fn(async () => ({
+        username: "noKarmaField",
+      }));
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runtime.createMemory).toHaveBeenCalled();
+    });
+
+    it("skips the trust check when mentionMinKarma is 0 (default)", async () => {
+      service.colonyConfig.mentionMinKarma = 0;
+      service.client.getNotifications.mockResolvedValue([
+        notif({ notification_type: "mention" }),
+      ]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      const getUserSpy = vi.fn();
+      (service.client as unknown as Record<string, unknown>).getUser = getUserSpy;
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getUserSpy).not.toHaveBeenCalled();
+      expect(runtime.createMemory).toHaveBeenCalled();
+    });
+
+    it("skips the trust check for non-mention notification types", async () => {
+      service.colonyConfig.mentionMinKarma = 5;
+      service.client.getNotifications.mockResolvedValue([
+        notif({ notification_type: "comment_on_post" }),
+      ]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      const getUserSpy = vi.fn();
+      (service.client as unknown as Record<string, unknown>).getUser = getUserSpy;
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getUserSpy).not.toHaveBeenCalled();
+      expect(runtime.createMemory).toHaveBeenCalled();
+    });
+
+    it("skips the trust check when post author username is missing", async () => {
+      service.colonyConfig.mentionMinKarma = 5;
+      service.client.getNotifications.mockResolvedValue([
+        notif({ notification_type: "mention" }),
+      ]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: {},
+      });
+      const getUserSpy = vi.fn();
+      (service.client as unknown as Record<string, unknown>).getUser = getUserSpy;
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getUserSpy).not.toHaveBeenCalled();
+      expect(runtime.createMemory).toHaveBeenCalled();
+    });
+  });
 });

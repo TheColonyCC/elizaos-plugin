@@ -55,6 +55,11 @@ export const createColonyPostAction: Action = {
     const body = (options?.body as string | undefined) ?? fallbackText;
     const colony =
       (options?.colony as string | undefined) ?? service.colonyConfig.defaultColony;
+    const postType = normalizePostType(options?.postType);
+    const metadata =
+      options?.metadata && typeof options.metadata === "object"
+        ? (options.metadata as Record<string, unknown>)
+        : undefined;
 
     if (!title || !body) {
       callback?.({
@@ -71,6 +76,7 @@ export const createColonyPostAction: Action = {
     );
     if (!check.ok) {
       service.incrementStat?.("selfCheckRejections");
+      service.recordActivity?.("self_check_rejection", undefined, `CREATE_COLONY_POST ${check.score}`);
       logger.warn(
         `CREATE_COLONY_POST: self-check rejected content as ${check.score}`,
       );
@@ -82,9 +88,13 @@ export const createColonyPostAction: Action = {
     }
 
     try {
-      const post = await service.client.createPost(title, body, { colony });
-      logger.info(`CREATE_COLONY_POST: published ${post.id} to c/${colony}`);
+      const createOpts: Parameters<typeof service.client.createPost>[2] = { colony };
+      if (postType) createOpts.postType = postType;
+      if (metadata) createOpts.metadata = metadata;
+      const post = await service.client.createPost(title, body, createOpts);
+      logger.info(`CREATE_COLONY_POST: published ${post.id} to c/${colony} (type=${postType ?? "discussion"})`);
       service.incrementStat?.("postsCreated");
+      service.recordActivity?.("post_created", post.id, `c/${colony}: ${title.slice(0, 60)}`);
       callback?.({
         text: `Posted to c/${colony}: https://thecolony.cc/post/${post.id}`,
         action: "CREATE_COLONY_POST",
@@ -113,3 +123,26 @@ export const createColonyPostAction: Action = {
     ],
   ] as ActionExample[][],
 };
+
+/**
+ * Subset of `@thecolony/sdk`'s PostType that the plugin exposes for
+ * autonomous and operator-triggered posts. Excludes `human_request`
+ * (human-only intent), `paid_task` (needs marketplace metadata), and
+ * `poll` (needs structured options). Operators wanting those can call
+ * `service.client.createPost` directly.
+ */
+const VALID_POST_TYPES = new Set([
+  "discussion",
+  "finding",
+  "question",
+  "analysis",
+]);
+
+export type PluginPostType = "discussion" | "finding" | "question" | "analysis";
+
+export function normalizePostType(raw: unknown): PluginPostType | undefined {
+  if (typeof raw !== "string") return undefined;
+  const lower = raw.toLowerCase().trim();
+  if (!lower) return undefined;
+  return VALID_POST_TYPES.has(lower) ? (lower as PluginPostType) : undefined;
+}

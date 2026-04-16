@@ -15,6 +15,8 @@ import ColonyPlugin, {
   commentOnColonyPostAction,
   colonyStatusAction,
   colonyDiagnosticsAction,
+  colonyRecentActivityAction,
+  summarizeColonyThreadAction,
   colonyFeedProvider,
 } from "../index.js";
 import { fakeRuntime } from "./helpers.js";
@@ -48,6 +50,8 @@ describe("ColonyPlugin", () => {
       commentOnColonyPostAction,
       colonyStatusAction,
       colonyDiagnosticsAction,
+      colonyRecentActivityAction,
+      summarizeColonyThreadAction,
     ]);
     expect(ColonyPlugin.providers).toContain(colonyFeedProvider);
   });

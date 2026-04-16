@@ -295,4 +295,60 @@ describe("ColonyService", () => {
       expect(service.currentKarma).toBe(0);
     });
   });
+
+  describe("activity log (v0.11.0)", () => {
+    it("recordActivity appends to the ring with ts/type", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      service.recordActivity("post_created", "p1", "hello");
+      expect(service.activityLog.length).toBe(1);
+      expect(service.activityLog[0]!.type).toBe("post_created");
+      expect(service.activityLog[0]!.target).toBe("p1");
+      expect(service.activityLog[0]!.detail).toBe("hello");
+      expect(service.activityLog[0]!.ts).toBeGreaterThan(0);
+    });
+
+    it("recordActivity omits optional fields when unset", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      service.recordActivity("backoff_triggered");
+      expect(service.activityLog[0]).toMatchObject({ type: "backoff_triggered" });
+      expect(service.activityLog[0]!.target).toBeUndefined();
+      expect(service.activityLog[0]!.detail).toBeUndefined();
+    });
+
+    it("activity log is capped at 50 entries (oldest dropped)", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      for (let i = 0; i < 60; i++) {
+        service.recordActivity("post_created", `p${i}`);
+      }
+      expect(service.activityLog.length).toBe(50);
+      // First 10 dropped, so p10 is the oldest in the ring
+      expect(service.activityLog[0]!.target).toBe("p10");
+      expect(service.activityLog[49]!.target).toBe("p59");
+    });
+
+    it("records backoff_triggered activity when karma drops enough", async () => {
+      mockGetMe
+        .mockResolvedValueOnce({ username: "k", karma: 100 })
+        .mockResolvedValueOnce({ username: "k", karma: 50 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_KARMA_BACKOFF_DROP: "10",
+        }),
+      );
+      await service.refreshKarma();
+      const backoffEntry = service.activityLog.find((e) => e.type === "backoff_triggered");
+      expect(backoffEntry).toBeDefined();
+      expect(backoffEntry!.detail).toContain("−50");
+    });
+  });
 });

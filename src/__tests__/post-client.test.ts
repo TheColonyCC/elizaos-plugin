@@ -601,6 +601,29 @@ describe("ColonyPostClient", () => {
       await c.stop();
     });
 
+    it("passes postType to createPost when configured", async () => {
+      service.client.createPost.mockResolvedValue({ id: "p-finding" });
+      const c = new ColonyPostClient(service as never, runtime, config({ postType: "finding" }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.client.createPost).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(String),
+        expect.objectContaining({ postType: "finding" }),
+      );
+      await c.stop();
+    });
+
+    it("omits postType from options when config postType is undefined", async () => {
+      service.client.createPost.mockResolvedValue({ id: "p-no-type" });
+      const c = new ColonyPostClient(service as never, runtime, config());
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const opts = service.client.createPost.mock.calls[0][2];
+      expect(opts).not.toHaveProperty("postType");
+      await c.stop();
+    });
+
     it("drops the tick when scorer flags INJECTION", async () => {
       let i = 0;
       runtime.useModel = vi.fn(async () => {

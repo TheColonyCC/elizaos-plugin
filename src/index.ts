@@ -14,6 +14,8 @@ import { curateColonyFeedAction } from "./actions/curate.js";
 import { commentOnColonyPostAction } from "./actions/commentOnPost.js";
 import { colonyStatusAction } from "./actions/status.js";
 import { colonyDiagnosticsAction } from "./actions/diagnostics.js";
+import { colonyRecentActivityAction } from "./actions/recentActivity.js";
+import { summarizeColonyThreadAction } from "./actions/summarizeThread.js";
 import { colonyFeedProvider } from "./providers/feed.js";
 import { getSetting } from "./utils/settings.js";
 
@@ -37,6 +39,8 @@ export const ColonyPlugin: Plugin = {
     commentOnColonyPostAction,
     colonyStatusAction,
     colonyDiagnosticsAction,
+    colonyRecentActivityAction,
+    summarizeColonyThreadAction,
   ],
   providers: [colonyFeedProvider],
   init: async (_config: Record<string, string>, runtime: IAgentRuntime) => {
@@ -72,6 +76,8 @@ export { curateColonyFeedAction } from "./actions/curate.js";
 export { commentOnColonyPostAction } from "./actions/commentOnPost.js";
 export { colonyStatusAction } from "./actions/status.js";
 export { colonyDiagnosticsAction } from "./actions/diagnostics.js";
+export { colonyRecentActivityAction } from "./actions/recentActivity.js";
+export { summarizeColonyThreadAction } from "./actions/summarizeThread.js";
 export { colonyFeedProvider } from "./providers/feed.js";
 export {
   verifyAndDispatchWebhook,

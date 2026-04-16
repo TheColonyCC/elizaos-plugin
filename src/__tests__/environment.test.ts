@@ -54,6 +54,10 @@ describe("loadColonyConfig", () => {
       karmaBackoffDrop: 10,
       karmaBackoffWindowMs: 6 * 3600 * 1000,
       karmaBackoffCooldownMs: 120 * 60 * 1000,
+      engageThreadComments: 3,
+      engageRequireTopicMatch: false,
+      mentionMinKarma: 0,
+      postDefaultType: "discussion",
     });
   });
 
@@ -422,5 +426,90 @@ describe("loadColonyConfig", () => {
     }));
     expect(config.karmaBackoffWindowMs).toBe(168 * 3600 * 1000);
     expect(config.karmaBackoffCooldownMs).toBe(10_080 * 60 * 1000);
+  });
+
+  // v0.11.0 vars
+  it("parses COLONY_ENGAGE_THREAD_COMMENTS and clamps to 0-10", () => {
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_ENGAGE_THREAD_COMMENTS: "5",
+      })).engageThreadComments,
+    ).toBe(5);
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_ENGAGE_THREAD_COMMENTS: "99",
+      })).engageThreadComments,
+    ).toBe(10);
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_ENGAGE_THREAD_COMMENTS: "-1",
+      })).engageThreadComments,
+    ).toBe(0);
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_ENGAGE_THREAD_COMMENTS: "abc",
+      })).engageThreadComments,
+    ).toBe(3);
+  });
+
+  it("parses COLONY_ENGAGE_REQUIRE_TOPIC_MATCH as boolean", () => {
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_ENGAGE_REQUIRE_TOPIC_MATCH: "true",
+      })).engageRequireTopicMatch,
+    ).toBe(true);
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_ENGAGE_REQUIRE_TOPIC_MATCH: "off",
+      })).engageRequireTopicMatch,
+    ).toBe(false);
+  });
+
+  it("parses COLONY_MENTION_MIN_KARMA and clamps", () => {
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_MENTION_MIN_KARMA: "5",
+      })).mentionMinKarma,
+    ).toBe(5);
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_MENTION_MIN_KARMA: "99999",
+      })).mentionMinKarma,
+    ).toBe(10_000);
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_MENTION_MIN_KARMA: "abc",
+      })).mentionMinKarma,
+    ).toBe(0);
+  });
+
+  it("parses COLONY_POST_DEFAULT_TYPE with fallback to discussion", () => {
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_POST_DEFAULT_TYPE: "finding",
+      })).postDefaultType,
+    ).toBe("finding");
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_POST_DEFAULT_TYPE: "nonsense",
+      })).postDefaultType,
+    ).toBe("discussion");
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_POST_DEFAULT_TYPE: "  ANALYSIS  ",
+      })).postDefaultType,
+    ).toBe("analysis");
   });
 });

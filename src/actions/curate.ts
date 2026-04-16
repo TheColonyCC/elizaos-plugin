@@ -151,6 +151,11 @@ export const curateColonyFeedAction: Action = {
     const up = outcomes.filter((o) => o.action === "upvote").length;
     const down = outcomes.filter((o) => o.action === "downvote").length;
     const skip = outcomes.filter((o) => o.action === "skip").length;
+    service.recordActivity?.(
+      "curation_run",
+      colony,
+      `${up}+/${down}- over ${outcomes.length} scanned${dryRun ? " [dry]" : ""}`,
+    );
 
     const detail = outcomes
       .filter((o) => o.action !== "skip")
@@ -203,6 +208,11 @@ async function tryVote(
   try {
     await service.client.votePost(postId, value);
     service.incrementStat?.("votesCast");
+    service.recordActivity?.(
+      "vote_cast",
+      postId,
+      `curation ${value === 1 ? "+1" : "-1"}`,
+    );
     return true;
   } catch (err) {
     logger.warn(`CURATE_COLONY_FEED: votePost(${postId}, ${value}) failed: ${String(err)}`);

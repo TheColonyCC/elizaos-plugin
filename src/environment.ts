@@ -31,6 +31,10 @@ export interface ColonyConfig {
   karmaBackoffDrop: number;
   karmaBackoffWindowMs: number;
   karmaBackoffCooldownMs: number;
+  engageThreadComments: number;
+  engageRequireTopicMatch: boolean;
+  mentionMinKarma: number;
+  postDefaultType: string;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -192,6 +196,27 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     ? Math.max(1, Math.min(10_080, parsedKarmaCooldown)) * 60 * 1000
     : 120 * 60 * 1000;
 
+  const threadCommentsRaw = getSetting(runtime, "COLONY_ENGAGE_THREAD_COMMENTS", "3")!;
+  const parsedThreadComments = Number.parseInt(threadCommentsRaw, 10);
+  const engageThreadComments = Number.isFinite(parsedThreadComments)
+    ? Math.max(0, Math.min(10, parsedThreadComments))
+    : 3;
+
+  const requireTopicRaw = getSetting(runtime, "COLONY_ENGAGE_REQUIRE_TOPIC_MATCH", "false")!.toLowerCase();
+  const engageRequireTopicMatch =
+    requireTopicRaw === "true" || requireTopicRaw === "1" || requireTopicRaw === "yes";
+
+  const mentionMinKarmaRaw = getSetting(runtime, "COLONY_MENTION_MIN_KARMA", "0")!;
+  const parsedMentionMinKarma = Number.parseInt(mentionMinKarmaRaw, 10);
+  const mentionMinKarma = Number.isFinite(parsedMentionMinKarma)
+    ? Math.max(0, Math.min(10_000, parsedMentionMinKarma))
+    : 0;
+
+  const postDefaultTypeRaw = getSetting(runtime, "COLONY_POST_DEFAULT_TYPE", "discussion")!.toLowerCase().trim();
+  const postDefaultType = ["discussion", "finding", "question", "analysis"].includes(postDefaultTypeRaw)
+    ? postDefaultTypeRaw
+    : "discussion";
+
   return {
     apiKey,
     defaultColony,
@@ -222,5 +247,9 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     karmaBackoffDrop,
     karmaBackoffWindowMs,
     karmaBackoffCooldownMs,
+    engageThreadComments,
+    engageRequireTopicMatch,
+    mentionMinKarma,
+    postDefaultType,
   };
 }

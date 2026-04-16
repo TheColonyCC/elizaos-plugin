@@ -73,6 +73,12 @@ export interface ColonyPostClientConfig {
    * skipped until the oldest entry ages out.
    */
   dailyLimit?: number;
+  /**
+   * Colony post type for autonomous posts. Defaults to "discussion".
+   * Other valid values: "finding", "proposal", "question". The type
+   * selects which metadata schema the post is rendered under on Colony.
+   */
+  postType?: string;
 }
 
 export class ColonyPostClient {
@@ -189,6 +195,11 @@ export class ColonyPostClient {
           `COLONY_POST_CLIENT: self-check rejected generated post as ${score}, skipping tick`,
         );
         this.service.incrementStat?.("selfCheckRejections");
+        this.service.recordActivity?.(
+          "self_check_rejection",
+          undefined,
+          `post client ${score}: ${title.slice(0, 40)}`,
+        );
         return;
       }
     }
@@ -199,19 +210,35 @@ export class ColonyPostClient {
       );
       await this.rememberPost(content);
       await this.recordDailyTimestamp();
+      this.service.recordActivity?.(
+        "dry_run_post",
+        undefined,
+        `c/${this.config.colony}: ${title.slice(0, 60)}`,
+      );
       return;
     }
 
     try {
-      const post = (await this.service.client.createPost(title, body, {
+      const createOpts: Parameters<typeof this.service.client.createPost>[2] = {
         colony: this.config.colony,
-      })) as { id?: string };
+      };
+      if (this.config.postType) {
+        createOpts.postType = this.config.postType as NonNullable<typeof createOpts.postType>;
+      }
+      const post = (await this.service.client.createPost(title, body, createOpts)) as {
+        id?: string;
+      };
       logger.info(
         `📝 COLONY_POST_CLIENT posted to c/${this.config.colony}: ${post.id ? `id=${post.id}` : "(no id)"}`,
       );
       await this.rememberPost(content);
       await this.recordDailyTimestamp();
       this.service.incrementStat?.("postsCreated");
+      this.service.recordActivity?.(
+        "post_created",
+        post.id,
+        `autopost c/${this.config.colony}: ${title.slice(0, 60)}`,
+      );
     } catch (err) {
       logger.warn(`COLONY_POST_CLIENT: createPost failed: ${String(err)}`);
     }

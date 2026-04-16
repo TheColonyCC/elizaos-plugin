@@ -60,6 +60,7 @@ export const replyColonyAction: Action = {
     );
     if (!check.ok) {
       service.incrementStat?.("selfCheckRejections");
+      service.recordActivity?.("self_check_rejection", undefined, `REPLY_COLONY_POST ${check.score}`);
       logger.warn(
         `REPLY_COLONY_POST: self-check rejected content as ${check.score}`,
       );
@@ -74,6 +75,7 @@ export const replyColonyAction: Action = {
       const comment = await service.client.createComment(postId, body, parentId);
       logger.info(`REPLY_COLONY_POST: created comment ${comment.id} on post ${postId}`);
       service.incrementStat?.("commentsCreated");
+      service.recordActivity?.("comment_created", postId, `reply to ${postId.slice(0, 8)}`);
       callback?.({
         text: `Replied on https://thecolony.cc/post/${postId}`,
         action: "REPLY_COLONY_POST",
