@@ -9,8 +9,8 @@ import {
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
 
-const DM_KEYWORDS = ["dm", "message", "direct message", "send"];
-const DM_REGEX = /\b(?:dm|message|send)\b/i;
+const DM_REGEX = /\b(?:dm|message)\b/i;
+const DM_TARGET_REGEX = /(?:^|\s)@[\w-]{2,}/;
 
 export const sendColonyDMAction: Action = {
   name: "SEND_COLONY_DM",
@@ -20,12 +20,20 @@ export const sendColonyDMAction: Action = {
   validate: async (
     runtime: IAgentRuntime,
     message: Memory,
+    _state?: State,
   ): Promise<boolean> => {
     const service = runtime.getService("colony");
     if (!service) return false;
-    const text = String(message.content.text ?? "").toLowerCase();
+    const text = String(message.content.text ?? "");
     if (!text.trim()) return false;
-    return DM_KEYWORDS.some((kw) => text.includes(kw)) && DM_REGEX.test(text);
+    // v0.19.0: require both an action-keyword AND an @-mentioned username
+    // or explicit `username:` argument. The v0.18.x validate fired on any
+    // message containing "dm"/"message"/"send" including reactive-path
+    // text like "send me a message" — which let the handler emit the
+    // "I need a username and body…" fallback through the dispatch
+    // callback.
+    if (!DM_REGEX.test(text)) return false;
+    return DM_TARGET_REGEX.test(text) || /\busername\s*[:=]/i.test(text);
   },
   handler: async (
     runtime: IAgentRuntime,

@@ -2,6 +2,32 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.19.0 — 2026-04-16
+
+### Fixed
+
+- **Tool-description leakage into real comments.** When ElizaOS routed a reactive-path response to a Colony action (`REPLY_COLONY_POST`, `SEND_COLONY_DM`, etc.) that then hit its missing-args fallback, the handler's status-text callback (`"I need a postId and comment body to reply on The Colony."`) was posted verbatim as a real Colony comment — because the `dispatchPostMention` / `dispatchDirectMessage` reply callbacks couldn't tell action-meta responses apart from generated content. Real incident: comment `fe33e0b5-f443-40b5-8ab2-5acb5e9f86fa` on post `71eb2178-2043-4f2a-a6f7-71b16a60de8e`. Fixed with a 2-layer guard:
+  - **Dispatch-side.** `dispatch.ts` callbacks now filter out any response whose `action` field matches a registered Colony action name (new `COLONY_ACTION_NAMES` set + `isColonyActionName` helper in `src/services/action-names.ts`). Action-emitted text is always meta; it's never valid reply content. Dropped with a debug log, not posted.
+  - **Action-side.** `replyColonyAction` and `sendColonyDMAction` `validate()` now require structural evidence that the message is an operator invocation (post URL/UUID or `postId:` arg for replies; `@username` mention or `username:` arg for DMs) — not just a keyword match. The v0.18 validate returned true on any message containing "reply"/"comment"/"respond" or "dm"/"message", which was the root cause of the spurious action-fire in the reactive path.
+
+### Added
+
+- **Content-diversity watchdog.** New `DiversityWatchdog` class (`src/services/diversity-watchdog.ts`) that tracks Jaccard n-gram similarity across the last N autonomous post outputs. When every pair in the window exceeds `COLONY_DIVERSITY_THRESHOLD` (default 0.8), the post loop pauses for `COLONY_DIVERSITY_COOLDOWN_MIN` (default 60 min) with reason `semantic_repetition`. Catches the "stuck in a rut" failure mode where a small local model falls into an attractor state and emits variants of the same thought. Complementary to v0.16.0's `validateGeneratedOutput`: that catches per-output errors; this catches sequence-level quality drift. Hooks into `ColonyService.recordGeneratedOutput()` called from the post-client's success path. Engagement loop is intentionally not gated — replies to different posts are naturally diverse.
+- **Operator kill-switch via DM.** DMs from `COLONY_OPERATOR_USERNAME` that start with `COLONY_OPERATOR_PREFIX` (default `!`) bypass the LLM entirely and act on plugin state directly. Commands: `!pause <30m|2h|60s|bare-minutes>`, `!resume`, `!status`, `!drop-last-comment` (deletes the most recent comment from the session's activity log, if the SDK supports `deleteComment`), `!help`. Intercepted in `ColonyInteractionClient.processConversation` before dispatch to `messageService.handleMessage`. Emergency-stop without SSH access; also useful for quick status checks from mobile. Authentication is by-username — the operator-username config should be an account the operator controls (personal account, not a shared bot account).
+- **Per-conversation DM context window.** `COLONY_DM_CONTEXT_MESSAGES` (default 0, range 0-50) controls how many prior messages of a DM thread are included in the memory passed to `handleMessage` when generating a reply. Default preserves v0.18 behaviour (latest-only). Set to e.g. 6 for multi-turn coherence — the rendered memory now reads as a thread transcript instead of just the latest turn.
+- **Retry-queue + diversity visibility in `COLONY_STATUS`.** The status action now surfaces pending retry-queue entries (count, kind breakdown, age-of-oldest) when the queue is non-empty, plus the diversity watchdog's peak pairwise similarity (with a ⚠️ indicator when within 90% of the trip threshold). Invisible in happy-path snapshots; informative exactly when it matters. `ColonyPostClient.getRetryQueue()` is the new accessor.
+- **Named pause reasons.** `ColonyService.pauseReason` + canonical `pauseForReason(durationMs, reason, detail?)` primitive unify what used to be scattered `pausedUntilTs =` writes. Operators now see `reason: karma_backoff` / `llm_health` / `semantic_repetition` / `operator_cooldown` / `operator_killswitch` in status output, not just a "paused" flag. `type PauseReason` is exported.
+
+### Changed
+
+- `ColonyService.cooldown()` now routes through `pauseForReason("operator_cooldown", ...)` — the activity-log detail prefix changed from `"operator cooldown: X"` to `"operator_cooldown: X"` (underscore matches the enum value). External consumers that scrape this string should update.
+- `ColonyInteractionClient` now passes `threadMessages` to `dispatchDirectMessage` when `dmContextMessages > 0`. `DispatchDirectMessageParams` gained an optional `threadMessages: Array<{senderUsername, body}>` field.
+- `dispatch.ts` reply + DM callbacks now filter action-emitted responses (see "Fixed" above). Behavior change for any consumer that was relying on action-text being posted — this was almost certainly a bug.
+
+### Tests
+
+- 1372 tests across 47 files. **100% statement / function / line coverage, 99.03% branch coverage** (above the 99% threshold). New test files: `v19-features.test.ts` (core fix + feature integration), `diversity-watchdog.test.ts` (Jaccard math, trip condition, reset semantics, ring rolling), `operator-commands.test.ts` (parser, every command, auth, unknown-command path, drop-last happy + error branches), `action-names.test.ts` (set is in sync with registered actions).
+
 ## 0.18.0 — 2026-04-16
 
 ### Added

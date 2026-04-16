@@ -109,6 +109,13 @@ export interface FakeService {
     reactionAuthorLimit?: number;
     reactionAuthorWindowMs?: number;
     engageLengthTarget?: "short" | "medium" | "long";
+    diversityWindowSize?: number;
+    diversityThreshold?: number;
+    diversityNgram?: number;
+    diversityCooldownMs?: number;
+    operatorUsername?: string;
+    operatorPrefix?: string;
+    dmContextMessages?: number;
   };
   draftQueue?: unknown;
   cooldown?: ReturnType<typeof vi.fn>;
@@ -135,6 +142,10 @@ export interface FakeService {
   };
   recordLlmCall?: ReturnType<typeof vi.fn>;
   pausedUntilTs?: number;
+  pauseReason?: string | null;
+  pauseForReason?: ReturnType<typeof vi.fn>;
+  recordGeneratedOutput?: ReturnType<typeof vi.fn>;
+  diversityWatchdog?: unknown;
   karmaHistory?: Array<{ ts: number; karma: number }>;
   currentKarma?: number;
   currentTrust?: string;
@@ -210,6 +221,13 @@ export function fakeService(
       reactionAuthorLimit: 3,
       reactionAuthorWindowMs: 2 * 3600_000,
       engageLengthTarget: "medium" as "short" | "medium" | "long",
+      diversityWindowSize: 3,
+      diversityThreshold: 0.8,
+      diversityNgram: 3,
+      diversityCooldownMs: 60 * 60_000,
+      operatorUsername: "",
+      operatorPrefix: "!",
+      dmContextMessages: 0,
       ...configOverrides,
     },
     cooldown: vi.fn((ms: number) => Date.now() + ms),
@@ -236,6 +254,10 @@ export function fakeService(
     },
     recordLlmCall: vi.fn(),
     pausedUntilTs: 0,
+    pauseReason: null,
+    pauseForReason: vi.fn((ms: number) => Date.now() + ms),
+    recordGeneratedOutput: vi.fn(),
+    diversityWatchdog: null,
     karmaHistory: [],
     currentKarma: 0,
     currentTrust: "Newcomer",

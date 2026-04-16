@@ -5,6 +5,7 @@ import {
   dispatchPostMention,
   isDuplicateMemoryId,
 } from "./dispatch.js";
+import { handleOperatorCommand } from "./operator-commands.js";
 
 type Notification = {
   id: string;
@@ -209,6 +210,50 @@ export class ColonyInteractionClient {
     const dmMemoryIdKey = `colony-dm-${latest.id}`;
     if (await isDuplicateMemoryId(this.runtime, dmMemoryIdKey)) return;
 
+    // v0.19.0: operator kill-switch. DMs from the configured operator
+    // that start with the command prefix bypass the LLM entirely and
+    // act on plugin state directly. Intercept before dispatch so the
+    // message service never sees them. Dedup-key insertion via the
+    // memoryId is skipped — operator commands are cheap and safe to
+    // replay, and skipping the dedup step avoids a whole failure mode
+    // where an errored command looks handled on retry.
+    const operatorResult = await handleOperatorCommand(
+      this.service,
+      username,
+      latest.body ?? "",
+    );
+    if (operatorResult !== null) {
+      logger.info(
+        `COLONY_INTERACTION: operator command '${operatorResult.command}' from @${username}`,
+      );
+      try {
+        await (this.service.client as unknown as {
+          sendMessage: (u: string, b: string) => Promise<unknown>;
+        }).sendMessage(username, operatorResult.reply);
+      } catch (err) {
+        logger.warn(
+          `COLONY_INTERACTION: failed to send operator-command reply: ${String(err)}`,
+        );
+      }
+      return;
+    }
+
+    // v0.19.0: per-conversation DM context. When enabled, include the
+    // last N messages of the thread in the dispatched memory so the
+    // agent's reply has multi-turn coherence. Off by default
+    // (dmContextMessages === 0) preserves v0.18 behaviour.
+    const contextCount = this.service.colonyConfig.dmContextMessages;
+    const threadMessages =
+      contextCount > 0
+        ? messages
+            .slice(-contextCount - 1, -1)
+            .filter((m) => typeof m.body === "string" && m.body.length > 0)
+            .map((m) => ({
+              senderUsername: m.sender?.username ?? "?",
+              body: m.body ?? "",
+            }))
+        : undefined;
+
     await dispatchDirectMessage(this.service, this.runtime, {
       memoryIdKey: dmMemoryIdKey,
       senderUsername: username,
@@ -216,6 +261,7 @@ export class ColonyInteractionClient {
       body: latest.body ?? "",
       conversationId: detail.id,
       createdAt: latest.created_at,
+      threadMessages,
     });
   }
 

@@ -879,6 +879,24 @@ describe("ColonyPostClient", () => {
       await c.stop();
     });
 
+    it("getRetryQueue exposes the queue when enabled (v0.19.0)", async () => {
+      const c = new ColonyPostClient(
+        service as never,
+        runtime,
+        config({ retryQueueEnabled: true }),
+      );
+      expect(c.getRetryQueue()).not.toBeNull();
+    });
+
+    it("getRetryQueue returns null when disabled (v0.19.0)", async () => {
+      const c = new ColonyPostClient(
+        service as never,
+        runtime,
+        config({ retryQueueEnabled: false }),
+      );
+      expect(c.getRetryQueue()).toBeNull();
+    });
+
     it("retry queue defaults to enabled when option unset (v0.13.0)", async () => {
       const cfg = config();
       delete (cfg as { retryQueueEnabled?: boolean }).retryQueueEnabled;

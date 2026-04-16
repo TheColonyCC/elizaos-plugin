@@ -93,6 +93,39 @@ export interface ColonyConfig {
    * explicitly to override.
    */
   engageLengthTarget: "short" | "medium" | "long";
+  /**
+   * v0.19.0: content-diversity watchdog. Tracks Jaccard similarity of
+   * the last `diversityWindowSize` autonomous-post outputs; if all
+   * pairs exceed `diversityThreshold`, the post loop pauses for
+   * `diversityCooldownMs`. Defence against the "stuck in a rut"
+   * failure where a small local model falls into an attractor state
+   * and emits variants of the same post over and over.
+   *
+   * `diversityThreshold: 0` disables the watchdog entirely. Engagement
+   * loop is NOT gated — replies to different posts are naturally
+   * diverse, and false positives there would mute thread engagement.
+   */
+  diversityWindowSize: number;
+  diversityThreshold: number;
+  diversityNgram: number;
+  diversityCooldownMs: number;
+  /**
+   * v0.19.0: operator kill-switch via DM. When a DM arrives from a
+   * username matching `operatorUsername` and starts with
+   * `operatorPrefix`, the command is parsed and applied directly to
+   * plugin state — `!pause <mins>`, `!resume`, `!status`,
+   * `!drop-last-comment`. The DM bypasses the LLM routing entirely.
+   * Empty `operatorUsername` disables the feature.
+   */
+  operatorUsername: string;
+  operatorPrefix: string;
+  /**
+   * v0.19.0: per-conversation DM context window. When generating a
+   * reply to a DM, include the last N messages from the thread in the
+   * memory passed to `handleMessage`. Default 0 (current behaviour:
+   * only the latest message). Set to e.g. 6 for multi-turn coherence.
+   */
+  dmContextMessages: number;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -431,6 +464,54 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
       ? reactionAuthorWindowHours
       : 2) * 3600_000;
 
+  // v0.19.0 — content-diversity watchdog
+  const diversityWindowRaw = getSetting(runtime, "COLONY_DIVERSITY_WINDOW", "3")!;
+  const parsedDiversityWindow = Number.parseInt(diversityWindowRaw, 10);
+  const diversityWindowSize = Number.isFinite(parsedDiversityWindow)
+    ? Math.max(2, Math.min(20, parsedDiversityWindow))
+    : 3;
+
+  const diversityThresholdRaw = getSetting(
+    runtime,
+    "COLONY_DIVERSITY_THRESHOLD",
+    "0.8",
+  )!;
+  const parsedDiversityThreshold = Number.parseFloat(diversityThresholdRaw);
+  const diversityThreshold = Number.isFinite(parsedDiversityThreshold)
+    ? Math.max(0, Math.min(1, parsedDiversityThreshold))
+    : 0.8;
+
+  const diversityNgramRaw = getSetting(runtime, "COLONY_DIVERSITY_NGRAM", "3")!;
+  const parsedDiversityNgram = Number.parseInt(diversityNgramRaw, 10);
+  const diversityNgram = Number.isFinite(parsedDiversityNgram)
+    ? Math.max(1, Math.min(8, parsedDiversityNgram))
+    : 3;
+
+  const diversityCooldownRaw = getSetting(
+    runtime,
+    "COLONY_DIVERSITY_COOLDOWN_MIN",
+    "60",
+  )!;
+  const parsedDiversityCooldown = Number.parseInt(diversityCooldownRaw, 10);
+  const diversityCooldownMs =
+    (Number.isFinite(parsedDiversityCooldown) && parsedDiversityCooldown > 0
+      ? parsedDiversityCooldown
+      : 60) * 60_000;
+
+  // v0.19.0 — operator kill-switch
+  const operatorUsername = getSetting(runtime, "COLONY_OPERATOR_USERNAME", "")!
+    .trim()
+    .toLowerCase();
+  const operatorPrefixRaw = getSetting(runtime, "COLONY_OPERATOR_PREFIX", "!")!;
+  const operatorPrefix = operatorPrefixRaw.length > 0 ? operatorPrefixRaw : "!";
+
+  // v0.19.0 — per-conversation DM context
+  const dmContextRaw = getSetting(runtime, "COLONY_DM_CONTEXT_MESSAGES", "0")!;
+  const parsedDmContext = Number.parseInt(dmContextRaw, 10);
+  const dmContextMessages = Number.isFinite(parsedDmContext)
+    ? Math.max(0, Math.min(50, parsedDmContext))
+    : 0;
+
   return {
     apiKey,
     defaultColony,
@@ -491,6 +572,13 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     reactionAuthorLimit,
     reactionAuthorWindowMs,
     engageLengthTarget,
+    diversityWindowSize,
+    diversityThreshold,
+    diversityNgram,
+    diversityCooldownMs,
+    operatorUsername,
+    operatorPrefix,
+    dmContextMessages,
   };
 }
 
@@ -515,11 +603,11 @@ export function parseQuietHours(
   if (!trimmed) return null;
   const match = trimmed.match(/^(\d{1,2})\s*-\s*(\d{1,2})$/);
   if (!match) return null;
+  // The regex guarantees at most 2 digits per group, so Number() is always finite.
   const startHour = Number(match[1]);
   const endHour = Number(match[2]);
-  if (!Number.isFinite(startHour) || !Number.isFinite(endHour)) return null;
-  if (startHour < 0 || startHour > 23) return null;
-  if (endHour < 0 || endHour > 23) return null;
+  if (startHour > 23) return null;
+  if (endHour > 23) return null;
   if (startHour === endHour) return null; // empty window == disabled
   return { startHour, endHour };
 }

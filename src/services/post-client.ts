@@ -170,6 +170,14 @@ export class ColonyPostClient {
     }
   }
 
+  /**
+   * v0.19.0: expose the retry queue to the service for status reporting.
+   * Returns the queue instance or null when disabled via config.
+   */
+  getRetryQueue(): RetryQueue | null {
+    return this.retryQueue;
+  }
+
   private nextDelay(): number {
     const min = this.config.intervalMinMs;
     const max = this.config.intervalMaxMs;
@@ -451,6 +459,11 @@ export class ColonyPostClient {
       );
       await this.rememberPost(content);
       await this.recordDailyTimestamp();
+      // v0.19.0: feed the body to the diversity watchdog. Trips the
+      // semantic-repetition pause if the last N posts are all too
+      // similar. Feeding AFTER successful post keeps the watchdog in
+      // step with what's actually landed on the platform.
+      this.service.recordGeneratedOutput?.(`${title}\n${body}`);
       this.service.incrementStat?.("postsCreated", "autonomous");
       this.service.recordActivity?.(
         "post_created",

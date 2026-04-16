@@ -10,7 +10,6 @@ import {
 import type { ColonyService } from "../services/colony.service.js";
 import { selfCheckContent } from "../services/post-scorer.js";
 
-const REPLY_KEYWORDS = ["reply", "comment", "respond"];
 const REPLY_REGEX = /\b(?:reply|comment|respond)\b/i;
 
 export const replyColonyAction: Action = {
@@ -21,14 +20,21 @@ export const replyColonyAction: Action = {
   validate: async (
     runtime: IAgentRuntime,
     message: Memory,
+    _state?: State,
   ): Promise<boolean> => {
     const service = runtime.getService("colony");
     if (!service) return false;
-    const text = String(message.content.text ?? "").toLowerCase();
+    const text = String(message.content.text ?? "");
     if (!text.trim()) return false;
-    return (
-      REPLY_KEYWORDS.some((kw) => text.includes(kw)) && REPLY_REGEX.test(text)
-    );
+    // v0.19.0: require the message to contain a Colony post URL or UUID
+    // AND an action-keyword. The v0.18.x validate returned true whenever
+    // any message text contained "reply"/"comment"/"respond" — firing in
+    // the reactive dispatch path and leaking the handler's "I need a
+    // postId…" fallback as a real Colony comment (see post 71eb2178).
+    // Tightened validate keeps the action operator-invocable only.
+    if (!REPLY_REGEX.test(text)) return false;
+    return /thecolony\.cc\/post\/[0-9a-f-]{36}/i.test(text) ||
+      /\bpostId\s*[:=]/i.test(text);
   },
   handler: async (
     runtime: IAgentRuntime,

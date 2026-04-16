@@ -6,6 +6,19 @@ import { ColonyPostClient } from "./post-client.js";
 import { ColonyEngagementClient } from "./engagement-client.js";
 import { checkOllamaReadiness, validateCharacter } from "../utils/readiness.js";
 import { DraftQueue } from "./draft-queue.js";
+import { DiversityWatchdog } from "./diversity-watchdog.js";
+
+/**
+ * Why the service is currently paused. Surfaced in COLONY_STATUS so
+ * operators can tell karma backoff from LLM health issues from a
+ * diversity watchdog trip from an operator cooldown at a glance.
+ */
+export type PauseReason =
+  | "karma_backoff"
+  | "llm_health"
+  | "semantic_repetition"
+  | "operator_cooldown"
+  | "operator_killswitch";
 
 export interface ColonyServiceStats {
   postsCreated: number;
@@ -137,11 +150,10 @@ export class ColonyService extends Service {
     const failed = recent.filter((e) => e.outcome === "failure").length;
     const rate = failed / recent.length;
     if (rate >= threshold && this.pausedUntilTs <= now) {
-      this.pausedUntilTs = now + cooldownMs;
-      this.recordActivity(
-        "backoff_triggered",
-        undefined,
-        `llm-health: ${failed}/${recent.length} failed (${Math.round(rate * 100)}% ≥ threshold ${Math.round(threshold * 100)}%)`,
+      this.pauseForReason(
+        cooldownMs,
+        "llm_health",
+        `${failed}/${recent.length} failed (${Math.round(rate * 100)}% ≥ threshold ${Math.round(threshold * 100)}%)`,
       );
       logger.warn(
         `⏸️  COLONY_SERVICE: LLM-health auto-pause — ${failed}/${recent.length} calls failed (${Math.round(rate * 100)}%) in last ${Math.round(
@@ -155,9 +167,56 @@ export class ColonyService extends Service {
 
   public karmaHistory: KarmaSnapshot[] = [];
   public pausedUntilTs = 0;
+  public pauseReason: PauseReason | null = null;
   public activityLog: ActivityEntry[] = [];
   public draftQueue: DraftQueue | null = null;
+  public diversityWatchdog: DiversityWatchdog | null = null;
   private signalHandlersRegistered: Array<{ sig: NodeJS.Signals; handler: () => void }> = [];
+
+  /**
+   * v0.19.0: canonical pause primitive. All the existing pause paths
+   * (karma backoff, LLM health, operator cooldown) used to mutate
+   * `pausedUntilTs` directly, which meant the status output couldn't
+   * tell them apart. Route everything through here going forward so
+   * the reason survives. Returns the effective `pausedUntilTs` — may
+   * be a pre-existing later pause that this call didn't shorten.
+   */
+  pauseForReason(durationMs: number, reason: PauseReason, detail?: string): number {
+    const now = Date.now();
+    const requested = now + Math.max(0, durationMs);
+    if (requested <= this.pausedUntilTs) return this.pausedUntilTs;
+    this.pausedUntilTs = requested;
+    this.pauseReason = reason;
+    this.recordActivity(
+      "backoff_triggered",
+      undefined,
+      detail ? `${reason}: ${detail}` : reason,
+    );
+    return this.pausedUntilTs;
+  }
+
+  /**
+   * v0.19.0: record a just-generated autonomous post body against the
+   * diversity watchdog. Trips the semantic-repetition pause when the
+   * last N outputs cluster above threshold. Safe to call even when
+   * the watchdog is disabled (`diversityThreshold === 0`).
+   */
+  recordGeneratedOutput(text: string): void {
+    if (!this.diversityWatchdog) return;
+    const tripped = this.diversityWatchdog.record(text);
+    if (!tripped) return;
+    const peak = this.diversityWatchdog.peakSimilarity();
+    this.diversityWatchdog.reset();
+    const cooldownMs = this.colonyConfig.diversityCooldownMs;
+    this.pauseForReason(
+      cooldownMs,
+      "semantic_repetition",
+      `last ${this.colonyConfig.diversityWindowSize} outputs ≥${Math.round(this.colonyConfig.diversityThreshold * 100)}% similar (peak ${Math.round(peak * 100)}%)`,
+    );
+    logger.warn(
+      `⏸️  COLONY_SERVICE: diversity watchdog tripped — pausing autonomous posting for ${Math.round(cooldownMs / 60_000)}min (peak similarity ${Math.round(peak * 100)}%)`,
+    );
+  }
 
   constructor(runtime?: IAgentRuntime) {
     super(runtime);
@@ -199,18 +258,17 @@ export class ColonyService extends Service {
     const max = Math.max(...this.karmaHistory.map((h) => h.karma));
     const drop = max - latest;
     if (drop >= this.colonyConfig.karmaBackoffDrop && this.pausedUntilTs <= now) {
-      this.pausedUntilTs = now + this.colonyConfig.karmaBackoffCooldownMs;
+      this.pauseForReason(
+        this.colonyConfig.karmaBackoffCooldownMs,
+        "karma_backoff",
+        `karma ${max}→${latest} (−${drop}) in ${Math.round(this.colonyConfig.karmaBackoffWindowMs / 3600_000)}h`,
+      );
       logger.warn(
         `⏸️  COLONY_SERVICE: karma dropped ${drop} points in ${Math.round(
           this.colonyConfig.karmaBackoffWindowMs / 3600_000,
         )}h window (max=${max}, latest=${latest}) — pausing autonomous posts/engagement for ${Math.round(
           this.colonyConfig.karmaBackoffCooldownMs / 60_000,
         )}min`,
-      );
-      this.recordActivity(
-        "backoff_triggered",
-        undefined,
-        `karma ${max}→${latest} (−${drop}) in ${Math.round(this.colonyConfig.karmaBackoffWindowMs / 3600_000)}h`,
       );
     }
   }
@@ -224,7 +282,8 @@ export class ColonyService extends Service {
     const now = Date.now();
     if (this.pausedUntilTs && now >= this.pausedUntilTs) {
       this.pausedUntilTs = 0;
-      logger.info("▶️  COLONY_SERVICE: karma-backoff pause elapsed, resuming");
+      this.pauseReason = null;
+      logger.info("▶️  COLONY_SERVICE: pause elapsed, resuming");
     }
     return now < this.pausedUntilTs;
   }
@@ -398,21 +457,16 @@ export class ColonyService extends Service {
    * shorten an already-active longer pause.
    */
   cooldown(durationMs: number, reason?: string): number {
-    const now = Date.now();
-    const requested = now + Math.max(0, durationMs);
-    if (requested <= this.pausedUntilTs) {
-      return this.pausedUntilTs;
+    const detail = reason
+      ? `${reason} for ${Math.round(durationMs / 60_000)}min`
+      : `for ${Math.round(durationMs / 60_000)}min`;
+    const ts = this.pauseForReason(durationMs, "operator_cooldown", detail);
+    if (ts > 0) {
+      logger.info(
+        `⏸️  COLONY_SERVICE: operator cooldown until ${new Date(ts).toISOString()}${reason ? ` (${reason})` : ""}`,
+      );
     }
-    this.pausedUntilTs = requested;
-    this.recordActivity(
-      "backoff_triggered",
-      undefined,
-      `operator cooldown${reason ? `: ${reason}` : ""} for ${Math.round(durationMs / 60_000)}min`,
-    );
-    logger.info(
-      `⏸️  COLONY_SERVICE: operator cooldown until ${new Date(this.pausedUntilTs).toISOString()}${reason ? ` (${reason})` : ""}`,
-    );
-    return this.pausedUntilTs;
+    return ts;
   }
 
   /**
@@ -473,6 +527,18 @@ export class ColonyService extends Service {
         service.username ?? "unknown",
         { maxAgeMs: 24 * 3600 * 1000, maxPending: 50 },
       );
+    }
+
+    // v0.19.0: content-diversity watchdog. Disabled when threshold is 0.
+    // Only the post loop feeds it — engagement outputs are naturally
+    // diverse (different posts → different replies) and would false-
+    // positive on a topic cluster.
+    if (service.colonyConfig.diversityThreshold > 0) {
+      service.diversityWatchdog = new DiversityWatchdog({
+        ngram: service.colonyConfig.diversityNgram,
+        windowSize: service.colonyConfig.diversityWindowSize,
+        threshold: service.colonyConfig.diversityThreshold,
+      });
     }
 
     if (service.colonyConfig.pollEnabled) {
