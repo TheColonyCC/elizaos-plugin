@@ -50,6 +50,9 @@ export interface ColonyConfig {
   selfCheckRetry: boolean;
   activityWebhookUrl: string;
   activityWebhookSecret: string;
+  engageFollowWeight: "off" | "soft" | "strict";
+  engagePreferredAuthors: string[];
+  postApprovalRequired: boolean;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -303,6 +306,20 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
   const activityWebhookUrl = getSetting(runtime, "COLONY_ACTIVITY_WEBHOOK_URL", "")!.trim();
   const activityWebhookSecret = getSetting(runtime, "COLONY_ACTIVITY_WEBHOOK_SECRET", "")!.trim();
 
+  const followWeightRaw = getSetting(runtime, "COLONY_ENGAGE_FOLLOW_WEIGHT", "off")!.toLowerCase().trim();
+  const engageFollowWeight: "off" | "soft" | "strict" =
+    followWeightRaw === "strict" ? "strict" : followWeightRaw === "soft" ? "soft" : "off";
+
+  const preferredAuthorsRaw = getSetting(runtime, "COLONY_ENGAGE_PREFERRED_AUTHORS", "")!;
+  const engagePreferredAuthors = preferredAuthorsRaw
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+
+  const postApprovalRaw = getSetting(runtime, "COLONY_POST_APPROVAL", "false")!.toLowerCase();
+  const postApprovalRequired =
+    postApprovalRaw === "true" || postApprovalRaw === "1" || postApprovalRaw === "yes";
+
   return {
     apiKey,
     defaultColony,
@@ -352,5 +369,8 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     selfCheckRetry,
     activityWebhookUrl,
     activityWebhookSecret,
+    engageFollowWeight,
+    engagePreferredAuthors,
+    postApprovalRequired,
   };
 }

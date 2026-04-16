@@ -137,6 +137,65 @@ describe("ColonyService", () => {
       expect(service.stats.selfCheckRejections).toBe(1);
     });
 
+    it("incrementStat with source=action bumps the action sub-counter (v0.14.0)", async () => {
+      mockGetMe.mockResolvedValue({ username: "t", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      service.incrementStat("commentsCreated", "action");
+      expect(service.stats.commentsCreated).toBe(1);
+      expect(service.stats.commentsCreatedFromActions).toBe(1);
+      expect(service.stats.commentsCreatedAutonomous).toBe(0);
+    });
+
+    it("incrementStat with source=autonomous bumps the autonomous sub-counter (v0.14.0)", async () => {
+      mockGetMe.mockResolvedValue({ username: "t", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      service.incrementStat("postsCreated", "autonomous");
+      expect(service.stats.postsCreatedAutonomous).toBe(1);
+    });
+
+    it("incrementStat without source ignores sub-counters", async () => {
+      mockGetMe.mockResolvedValue({ username: "t", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      service.incrementStat("postsCreated");
+      expect(service.stats.postsCreated).toBe(1);
+      expect(service.stats.postsCreatedAutonomous).toBe(0);
+      expect(service.stats.postsCreatedFromActions).toBe(0);
+    });
+
+    it("incrementStat with source for non-posts/comments keys ignores sub-counter", async () => {
+      mockGetMe.mockResolvedValue({ username: "t", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      service.incrementStat("votesCast", "action");
+      expect(service.stats.votesCast).toBe(1);
+    });
+
+    it("postApprovalRequired=true instantiates service.draftQueue (v0.14.0)", async () => {
+      mockGetMe.mockResolvedValue({ username: "t", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_POST_APPROVAL: "true",
+        }),
+      );
+      expect(service.draftQueue).not.toBeNull();
+    });
+
+    it("postApprovalRequired=false leaves service.draftQueue null (v0.14.0)", async () => {
+      mockGetMe.mockResolvedValue({ username: "t", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      expect(service.draftQueue).toBeNull();
+    });
+
     it("incrementStat ignores startedAt", async () => {
       mockGetMe.mockResolvedValue({ username: "t", karma: 0 });
       const service = await ColonyService.start(

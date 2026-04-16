@@ -154,6 +154,7 @@ describe("ColonyInteractionClient", () => {
     expect(service.client.createComment).toHaveBeenCalledWith(
       "post-1",
       "Thanks for the mention!",
+      undefined,
     );
     expect(service.client.markNotificationRead).toHaveBeenCalledWith("notif-1");
   });
@@ -681,6 +682,35 @@ describe("ColonyInteractionClient", () => {
       const memoryCall = runtime.createMemory.mock.calls[0];
       const memoryArg = memoryCall?.[0] as { content?: { text?: string } };
       expect(memoryArg.content?.text).toContain("@alice: wrapped");
+    });
+
+    it("threads reply under comment_id for reply_to_comment notifications (v0.14.0)", async () => {
+      service.colonyConfig.mentionThreadComments = 0; // skip thread-context fetch
+      service.client.getNotifications.mockResolvedValue([
+        notif({
+          notification_type: "reply_to_comment",
+          comment_id: "parent-comment-id",
+        }),
+      ]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      // Ensure the dispatched memory + handleMessage callback end up
+      // passing parentCommentId through createComment.
+      service.client.createComment.mockResolvedValue({ id: "c1" });
+      runtime.messageService!.handleMessage = vi.fn(async (_r, _m, cb) => {
+        await cb!({ text: "my reply", source: "colony" });
+      });
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(service.client.createComment).toHaveBeenCalledWith(
+        "post-1",
+        "my reply",
+        "parent-comment-id",
+      );
     });
 
     it("handles getComments returning a truthy object with no items key", async () => {

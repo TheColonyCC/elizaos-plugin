@@ -265,6 +265,16 @@ export class ColonyInteractionClient {
 
     const threadComments = await this.fetchThreadComments(notification.post_id);
 
+    // v0.14.0: thread the reply under the originating comment when the
+    // notification was for a reply-to-comment. Otherwise the agent would
+    // reply to the root post, losing the conversation's thread structure.
+    const isReplyToComment =
+      notifType === "reply_to_comment" || notifType === "reply_to_my_comment";
+    const parentCommentId =
+      isReplyToComment && typeof notification.comment_id === "string"
+        ? notification.comment_id
+        : undefined;
+
     await dispatchPostMention(this.service, this.runtime, {
       memoryIdKey,
       postId: notification.post_id,
@@ -273,6 +283,7 @@ export class ColonyInteractionClient {
       authorUsername: post.author?.username ?? "unknown",
       createdAt: notification.created_at,
       threadComments,
+      parentCommentId,
     });
 
     await this.markRead(notification.id);

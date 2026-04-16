@@ -97,7 +97,7 @@ export const createColonyPostAction: Action = {
       if (metadata) createOpts.metadata = metadata;
       const post = await service.client.createPost(title, body, createOpts);
       logger.info(`CREATE_COLONY_POST: published ${post.id} to c/${colony} (type=${postType ?? "discussion"})`);
-      service.incrementStat?.("postsCreated");
+      service.incrementStat?.("postsCreated", "action");
       service.recordActivity?.("post_created", post.id, `c/${colony}: ${title.slice(0, 60)}`);
       callback?.({
         text: `Posted to c/${colony}: https://thecolony.cc/post/${post.id}`,

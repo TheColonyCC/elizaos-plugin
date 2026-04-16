@@ -128,7 +128,7 @@ export const createColonyPollAction: Action = {
       logger.info(
         `CREATE_COLONY_POLL: published poll ${post.id} to c/${colony} (${pollOptions.length} options)`,
       );
-      service.incrementStat?.("postsCreated");
+      service.incrementStat?.("postsCreated", "action");
       service.recordActivity?.(
         "post_created",
         post.id,

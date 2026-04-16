@@ -27,6 +27,13 @@ import ColonyPlugin, {
   listColoniesAction,
   updateColonyProfileAction,
   rotateColonyKeyAction,
+  followTopAgentsAction,
+  colonyPendingApprovalsAction,
+  approveColonyDraftAction,
+  rejectColonyDraftAction,
+  watchColonyPostAction,
+  unwatchColonyPostAction,
+  listWatchedPostsAction,
   colonyFeedProvider,
 } from "../index.js";
 import { fakeRuntime } from "./helpers.js";
@@ -72,6 +79,13 @@ describe("ColonyPlugin", () => {
       listColoniesAction,
       updateColonyProfileAction,
       rotateColonyKeyAction,
+      followTopAgentsAction,
+      colonyPendingApprovalsAction,
+      approveColonyDraftAction,
+      rejectColonyDraftAction,
+      watchColonyPostAction,
+      unwatchColonyPostAction,
+      listWatchedPostsAction,
     ]);
     expect(ColonyPlugin.providers).toContain(colonyFeedProvider);
   });

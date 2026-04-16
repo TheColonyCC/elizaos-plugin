@@ -27,6 +27,17 @@ import {
 } from "./actions/colonyMembership.js";
 import { updateColonyProfileAction } from "./actions/updateProfile.js";
 import { rotateColonyKeyAction } from "./actions/rotateKey.js";
+import { followTopAgentsAction } from "./actions/followTopAgents.js";
+import {
+  colonyPendingApprovalsAction,
+  approveColonyDraftAction,
+  rejectColonyDraftAction,
+} from "./actions/approval.js";
+import {
+  watchColonyPostAction,
+  unwatchColonyPostAction,
+  listWatchedPostsAction,
+} from "./actions/watchPost.js";
 import { colonyFeedProvider } from "./providers/feed.js";
 import { getSetting } from "./utils/settings.js";
 
@@ -62,6 +73,13 @@ export const ColonyPlugin: Plugin = {
     listColoniesAction,
     updateColonyProfileAction,
     rotateColonyKeyAction,
+    followTopAgentsAction,
+    colonyPendingApprovalsAction,
+    approveColonyDraftAction,
+    rejectColonyDraftAction,
+    watchColonyPostAction,
+    unwatchColonyPostAction,
+    listWatchedPostsAction,
   ],
   providers: [colonyFeedProvider],
   init: async (_config: Record<string, string>, runtime: IAgentRuntime) => {
@@ -113,6 +131,23 @@ export {
 } from "./actions/colonyMembership.js";
 export { updateColonyProfileAction } from "./actions/updateProfile.js";
 export { rotateColonyKeyAction } from "./actions/rotateKey.js";
+export { followTopAgentsAction } from "./actions/followTopAgents.js";
+export {
+  colonyPendingApprovalsAction,
+  approveColonyDraftAction,
+  rejectColonyDraftAction,
+} from "./actions/approval.js";
+export {
+  watchColonyPostAction,
+  unwatchColonyPostAction,
+  listWatchedPostsAction,
+} from "./actions/watchPost.js";
+export {
+  DraftQueue,
+  type Draft,
+  type DraftPayload,
+  type DraftQueueConfig,
+} from "./services/draft-queue.js";
 export {
   RetryQueue,
   type RetryEntry,

@@ -776,6 +776,55 @@ describe("ColonyPostClient", () => {
       await c.stop();
     });
 
+    it("approvalRequired preserves postType in the draft payload (v0.14.0)", async () => {
+      const { DraftQueue } = await import("../services/draft-queue.js");
+      const store = new Map<string, unknown>();
+      runtime.getCache = vi.fn(async (k: string) => store.get(k));
+      runtime.setCache = vi.fn(async (k: string, v: unknown) => {
+        store.set(k, v);
+      });
+      const queue = new DraftQueue(runtime, "eliza-test", {
+        maxAgeMs: 60_000,
+        maxPending: 50,
+      });
+      const c = new ColonyPostClient(service as never, runtime, config({
+        approvalRequired: true,
+        draftQueue: queue,
+        postType: "finding",
+      }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const drafts = await queue.pending();
+      expect(drafts.length).toBe(1);
+      expect(drafts[0]!.payload.postType).toBe("finding");
+      await c.stop();
+    });
+
+    it("approvalRequired routes the generated post to the draft queue instead of publishing (v0.14.0)", async () => {
+      service.client.createPost.mockResolvedValue({ id: "should-not-be-called" });
+      const { DraftQueue } = await import("../services/draft-queue.js");
+      const store = new Map<string, unknown>();
+      runtime.getCache = vi.fn(async (k: string) => store.get(k));
+      runtime.setCache = vi.fn(async (k: string, v: unknown) => {
+        store.set(k, v);
+      });
+      const queue = new DraftQueue(runtime, "eliza-test", {
+        maxAgeMs: 60_000,
+        maxPending: 50,
+      });
+      const c = new ColonyPostClient(service as never, runtime, config({
+        approvalRequired: true,
+        draftQueue: queue,
+      }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.client.createPost).not.toHaveBeenCalled();
+      const drafts = await queue.pending();
+      expect(drafts.length).toBe(1);
+      expect(drafts[0]!.kind).toBe("post");
+      await c.stop();
+    });
+
     it("retry queue uses 'unknown' cache key when service has no username (v0.13.0)", async () => {
       service.username = undefined;
       service.client.createPost.mockRejectedValue(new Error("500"));

@@ -73,6 +73,9 @@ describe("loadColonyConfig", () => {
       selfCheckRetry: false,
       activityWebhookUrl: "",
       activityWebhookSecret: "",
+      engageFollowWeight: "off",
+      engagePreferredAuthors: [],
+      postApprovalRequired: false,
     });
   });
 
@@ -630,6 +633,24 @@ describe("loadColonyConfig", () => {
         COLONY_LOG_FORMAT: "garbage",
       })).logFormat,
     ).toBe("text");
+  });
+
+  it("parses COLONY_ENGAGE_FOLLOW_WEIGHT soft value (v0.14.0)", () => {
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_ENGAGE_FOLLOW_WEIGHT: "soft",
+      })).engageFollowWeight,
+    ).toBe("soft");
+  });
+
+  it("parses COLONY_POST_APPROVAL (v0.14.0)", () => {
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_POST_APPROVAL: "true",
+      })).postApprovalRequired,
+    ).toBe(true);
   });
 
   // v0.13.0

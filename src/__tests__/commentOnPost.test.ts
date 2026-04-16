@@ -509,7 +509,7 @@ describe("commentOnColonyPostAction", () => {
           undefined,
           makeCallback(),
         );
-        expect(service.incrementStat).toHaveBeenCalledWith("commentsCreated");
+        expect(service.incrementStat).toHaveBeenCalledWith("commentsCreated", "action");
       });
     });
 

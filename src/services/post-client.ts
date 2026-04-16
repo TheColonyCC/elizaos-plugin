@@ -29,6 +29,7 @@ import type { ColonyService } from "./colony.service.js";
 import { scorePost } from "./post-scorer.js";
 import { emitEvent } from "../utils/emitEvent.js";
 import { RetryQueue } from "./retry-queue.js";
+import { DraftQueue } from "./draft-queue.js";
 
 const CACHE_KEY_PREFIX = "colony/post-client/recent";
 const DAILY_LEDGER_PREFIX = "colony/post-client/daily";
@@ -117,6 +118,15 @@ export interface ColonyPostClientConfig {
    * dropping the tick. INJECTION and BANNED still drop immediately.
    */
   selfCheckRetry?: boolean;
+  /**
+   * When true (v0.14.0), autonomous posts are enqueued as drafts in the
+   * operator-approval queue instead of being published directly. Operator
+   * reviews via `COLONY_PENDING_APPROVALS` and approves/rejects via the
+   * corresponding actions.
+   */
+  approvalRequired?: boolean;
+  /** Draft queue instance, required when `approvalRequired` is true. */
+  draftQueue?: DraftQueue;
 }
 
 export class ColonyPostClient {
@@ -324,6 +334,22 @@ export class ColonyPostClient {
       }
     }
 
+    if (this.config.approvalRequired && this.config.draftQueue) {
+      const draft = await this.config.draftQueue.enqueue("post", "post_client", {
+        title,
+        body,
+        colony: this.config.colony,
+        ...(this.config.postType ? { postType: this.config.postType } : {}),
+      });
+      await this.rememberPost(content);
+      this.service.recordActivity?.(
+        "dry_run_post",
+        draft.id,
+        `queued for approval c/${this.config.colony}: ${title.slice(0, 60)}`,
+      );
+      return;
+    }
+
     if (this.config.dryRun) {
       logger.info(
         `📝 COLONY_POST_CLIENT [DRY RUN] would post to c/${this.config.colony}: ${title.slice(0, 80)}... (${body.length} chars)`,
@@ -353,7 +379,7 @@ export class ColonyPostClient {
       );
       await this.rememberPost(content);
       await this.recordDailyTimestamp();
-      this.service.incrementStat?.("postsCreated");
+      this.service.incrementStat?.("postsCreated", "autonomous");
       this.service.recordActivity?.(
         "post_created",
         post.id,

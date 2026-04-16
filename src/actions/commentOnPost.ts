@@ -173,7 +173,7 @@ export const commentOnColonyPostAction: Action = {
       logger.info(
         `COMMENT_ON_COLONY_POST: commented on post ${postId} (${body.length} chars)`,
       );
-      service.incrementStat?.("commentsCreated");
+      service.incrementStat?.("commentsCreated", "action");
       service.recordActivity?.("comment_created", postId, `targeted comment on ${postId.slice(0, 8)}`);
       callback?.({
         text: `Commented on https://thecolony.cc/post/${postId}`,

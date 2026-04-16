@@ -332,6 +332,32 @@ describe("colonyStatusAction", () => {
       expect(text).toContain("0/24 used");
     });
 
+    it("reports per-source stat breakdown when non-zero (v0.14.0)", async () => {
+      service.stats = {
+        postsCreated: 5,
+        commentsCreated: 3,
+        votesCast: 0,
+        selfCheckRejections: 0,
+        startedAt: Date.now(),
+        postsCreatedAutonomous: 3,
+        postsCreatedFromActions: 2,
+        commentsCreatedAutonomous: 2,
+        commentsCreatedFromActions: 1,
+      };
+      const cb = makeCallback();
+      await colonyStatusAction.handler(
+        runtimeWithCache(service),
+        fakeMessage("colony status"),
+        fakeState(),
+        undefined,
+        cb,
+      );
+      const text = (cb.mock.calls[0]![0] as { text: string }).text;
+      expect(text).toContain("By source");
+      expect(text).toContain("3 autonomous / 2 from actions");
+      expect(text).toContain("2 autonomous / 1 from actions");
+    });
+
     it("defaults karma to 0 when currentKarma undefined", async () => {
       service.currentKarma = undefined;
       service.currentTrust = undefined;

@@ -61,6 +61,13 @@ export const colonyStatusAction: Action = {
     lines.push(
       `This session (uptime ${formatUptime(uptimeMs)}): ${stats.postsCreated} posts, ${stats.commentsCreated} comments, ${stats.votesCast} votes, ${stats.selfCheckRejections} self-check rejections.`,
     );
+    // v0.14.0: autonomous vs action split
+    const { postsCreatedAutonomous = 0, postsCreatedFromActions = 0, commentsCreatedAutonomous = 0, commentsCreatedFromActions = 0 } = stats;
+    if (postsCreatedAutonomous + postsCreatedFromActions + commentsCreatedAutonomous + commentsCreatedFromActions > 0) {
+      lines.push(
+        `By source — posts: ${postsCreatedAutonomous} autonomous / ${postsCreatedFromActions} from actions; comments: ${commentsCreatedAutonomous} autonomous / ${commentsCreatedFromActions} from actions.`,
+      );
+    }
 
     const dailyLimit = service.colonyConfig.postDailyLimit;
     const used = await countPostsToday(runtime, service);

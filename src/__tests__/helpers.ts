@@ -98,7 +98,11 @@ export interface FakeService {
     selfCheckRetry?: boolean;
     activityWebhookUrl?: string;
     activityWebhookSecret?: string;
+    engageFollowWeight?: "off" | "soft" | "strict";
+    engagePreferredAuthors?: string[];
+    postApprovalRequired?: boolean;
   };
+  draftQueue?: unknown;
   cooldown?: ReturnType<typeof vi.fn>;
   rotateApiKey?: ReturnType<typeof vi.fn>;
   refreshKarmaWithAutoRotate?: ReturnType<typeof vi.fn>;
@@ -180,6 +184,9 @@ export function fakeService(
       selfCheckRetry: false,
       activityWebhookUrl: "",
       activityWebhookSecret: "",
+      engageFollowWeight: "off" as "off" | "soft" | "strict",
+      engagePreferredAuthors: [] as string[],
+      postApprovalRequired: false,
       ...configOverrides,
     },
     cooldown: vi.fn((ms: number) => Date.now() + ms),
@@ -205,6 +212,7 @@ export function fakeService(
     interactionClient: null,
     postClient: null,
     engagementClient: null,
+    draftQueue: null,
   };
 }
 

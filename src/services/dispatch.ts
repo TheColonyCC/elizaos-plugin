@@ -89,6 +89,13 @@ export interface DispatchPostMentionParams {
     author?: { username?: string };
     body?: string;
   }>;
+  /**
+   * When set, the agent's reply is posted as a reply-to-comment rather
+   * than a top-level comment on the post. Typically populated from a
+   * `reply_to_comment` notification's `comment_id` field so the reply
+   * threads under the comment that triggered it.
+   */
+  parentCommentId?: string;
 }
 
 /**
@@ -185,6 +192,7 @@ export async function dispatchPostMention(
   }
 
   const postId = params.postId;
+  const parentCommentId = params.parentCommentId;
   const callback: HandlerCallback = async (response) => {
     const replyText = String(response?.text ?? "").trim();
     if (!replyText) return [];
@@ -192,6 +200,7 @@ export async function dispatchPostMention(
       const comment = (await service.client.createComment(
         postId,
         replyText,
+        parentCommentId,
       )) as { id?: string };
       const responseMemory: Memory = {
         id: stringToUuid(runtime, `colony-comment-${comment.id ?? postId}`) as Memory["id"],

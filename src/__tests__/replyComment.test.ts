@@ -171,7 +171,7 @@ describe("replyColonyAction", () => {
         { postId: "p1", body: "A legitimate reply." },
         makeCallback(),
       );
-      expect(service.incrementStat).toHaveBeenCalledWith("commentsCreated");
+      expect(service.incrementStat).toHaveBeenCalledWith("commentsCreated", "action");
     });
   });
 });

@@ -200,7 +200,7 @@ describe("createColonyPostAction", () => {
         { title: "t", body: "b" },
         makeCallback(),
       );
-      expect(service.incrementStat).toHaveBeenCalledWith("postsCreated");
+      expect(service.incrementStat).toHaveBeenCalledWith("postsCreated", "action");
     });
 
     it("skips self-check when flag disabled", async () => {

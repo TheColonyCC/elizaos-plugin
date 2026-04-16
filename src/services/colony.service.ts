@@ -5,6 +5,7 @@ import { ColonyInteractionClient } from "./interaction.js";
 import { ColonyPostClient } from "./post-client.js";
 import { ColonyEngagementClient } from "./engagement-client.js";
 import { checkOllamaReadiness, validateCharacter } from "../utils/readiness.js";
+import { DraftQueue } from "./draft-queue.js";
 
 export interface ColonyServiceStats {
   postsCreated: number;
@@ -12,7 +13,18 @@ export interface ColonyServiceStats {
   votesCast: number;
   selfCheckRejections: number;
   startedAt: number;
+  /**
+   * v0.14.0: per-source breakdown. Distinguishes "work the agent did on
+   * its own" from "work the operator triggered." The totals above are
+   * still the sum of these.
+   */
+  postsCreatedAutonomous: number;
+  postsCreatedFromActions: number;
+  commentsCreatedAutonomous: number;
+  commentsCreatedFromActions: number;
 }
+
+export type StatSource = "autonomous" | "action";
 
 export interface KarmaSnapshot {
   ts: number;
@@ -60,11 +72,16 @@ export class ColonyService extends Service {
     votesCast: 0,
     selfCheckRejections: 0,
     startedAt: Date.now(),
+    postsCreatedAutonomous: 0,
+    postsCreatedFromActions: 0,
+    commentsCreatedAutonomous: 0,
+    commentsCreatedFromActions: 0,
   };
 
   public karmaHistory: KarmaSnapshot[] = [];
   public pausedUntilTs = 0;
   public activityLog: ActivityEntry[] = [];
+  public draftQueue: DraftQueue | null = null;
   private signalHandlersRegistered: Array<{ sig: NodeJS.Signals; handler: () => void }> = [];
 
   constructor(runtime?: IAgentRuntime) {
@@ -137,9 +154,18 @@ export class ColonyService extends Service {
     return now < this.pausedUntilTs;
   }
 
-  incrementStat<K extends keyof ColonyServiceStats>(key: K): void {
+  incrementStat<K extends keyof ColonyServiceStats>(key: K, source?: StatSource): void {
     if (key === "startedAt") return;
-    this.stats = { ...this.stats, [key]: (this.stats[key] as number) + 1 };
+    const patch: Partial<ColonyServiceStats> = {
+      [key]: (this.stats[key] as number) + 1,
+    };
+    // v0.14.0: when a source is provided on a posts/comments event, bump
+    // the corresponding autonomous/action sub-counter.
+    if (source && (key === "postsCreated" || key === "commentsCreated")) {
+      const subKey = `${key}${source === "autonomous" ? "Autonomous" : "FromActions"}` as keyof ColonyServiceStats;
+      patch[subKey] = (this.stats[subKey] as number) + 1;
+    }
+    this.stats = { ...this.stats, ...patch };
   }
 
   /**
@@ -366,6 +392,14 @@ export class ColonyService extends Service {
       throw err;
     }
 
+    if (service.colonyConfig.postApprovalRequired) {
+      service.draftQueue = new DraftQueue(
+        runtime,
+        service.username ?? "unknown",
+        { maxAgeMs: 24 * 3600 * 1000, maxPending: 50 },
+      );
+    }
+
     if (service.colonyConfig.pollEnabled) {
       service.interactionClient = new ColonyInteractionClient(
         service,
@@ -400,6 +434,8 @@ export class ColonyService extends Service {
         retryQueueMaxAttempts: service.colonyConfig.retryQueueMaxAttempts,
         retryQueueMaxAgeMs: service.colonyConfig.retryQueueMaxAgeMs,
         selfCheckRetry: service.colonyConfig.selfCheckRetry,
+        approvalRequired: service.colonyConfig.postApprovalRequired,
+        draftQueue: service.draftQueue ?? undefined,
       });
       await service.postClient.start();
     } else {
@@ -426,6 +462,10 @@ export class ColonyService extends Service {
         bannedPatterns: service.colonyConfig.bannedPatterns,
         logFormat: service.colonyConfig.logFormat,
         reactionMode: service.colonyConfig.engageReactionMode,
+        followWeight: service.colonyConfig.engageFollowWeight,
+        preferredAuthors: service.colonyConfig.engagePreferredAuthors,
+        approvalRequired: service.colonyConfig.postApprovalRequired,
+        draftQueue: service.draftQueue ?? undefined,
       });
       await service.engagementClient.start();
     } else {

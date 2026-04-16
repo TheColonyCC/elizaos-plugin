@@ -37,6 +37,7 @@ import type { ColonyService } from "./colony.service.js";
 import { cleanGeneratedPost } from "./post-client.js";
 import { scorePost } from "./post-scorer.js";
 import { emitEvent } from "../utils/emitEvent.js";
+import { DraftQueue } from "./draft-queue.js";
 
 const CACHE_KEY_PREFIX = "colony/engagement-client/seen";
 const SEEN_RING_SIZE = 100;
@@ -88,6 +89,22 @@ export interface ColonyEngagementClientConfig {
    * false — opt-in, behavior with `false` is unchanged (always COMMENT).
    */
   reactionMode?: boolean;
+  /**
+   * Follow-graph weighting mode (v0.14.0):
+   *   "off"    — candidate order untouched (default, previous behavior)
+   *   "soft"   — candidates from preferredAuthors surface first, others still eligible
+   *   "strict" — only candidates from preferredAuthors are eligible
+   */
+  followWeight?: "off" | "soft" | "strict";
+  /**
+   * Operator-declared list of usernames the agent treats as high-signal.
+   * Combines with `followWeight` to reorder or filter engagement
+   * candidates. Usernames are lowercased at config-load time.
+   */
+  preferredAuthors?: string[];
+  /** v0.14.0: when true, engagement comments enqueue as drafts. */
+  approvalRequired?: boolean;
+  draftQueue?: DraftQueue;
 }
 
 const REACTION_EMOJIS = [
@@ -212,12 +229,16 @@ export class ColonyEngagementClient {
     const selfUsername =
       (this.service as unknown as { username?: string }).username;
     const seen = new Set(await this.seenPosts());
-    const candidate = posts.find(
+
+    const eligible = posts.filter(
       (p) =>
         !!p.id &&
         !seen.has(p.id) &&
         p.author?.username !== selfUsername,
     );
+
+    const ordered = this.applyFollowWeight(eligible);
+    const candidate = ordered[0];
 
     if (!candidate) {
       logger.debug(
@@ -277,14 +298,20 @@ export class ColonyEngagementClient {
       return;
     }
 
-    const content = cleanGeneratedPost(generated);
-    if (!content) {
+    const rawContent = cleanGeneratedPost(generated);
+    if (!rawContent) {
       logger.debug(
         `COLONY_ENGAGEMENT_CLIENT: SKIP on post ${candidate.id} in c/${colony}`,
       );
       await this.markSeen(candidate.id);
       return;
     }
+
+    const { parentCommentId, cleanedBody } = this.extractReplyTarget(
+      rawContent,
+      threadComments,
+    );
+    const content = cleanedBody || rawContent;
 
     if (this.config.selfCheck ?? true) {
       const score = await scorePost(this.runtime, {
@@ -315,6 +342,21 @@ export class ColonyEngagementClient {
       }
     }
 
+    if (this.config.approvalRequired && this.config.draftQueue) {
+      const draft = await this.config.draftQueue.enqueue("comment", "engagement_client", {
+        postId: candidate.id,
+        body: content,
+        ...(parentCommentId ? { parentCommentId } : {}),
+      });
+      await this.markSeen(candidate.id);
+      this.service.recordActivity?.(
+        "dry_run_comment",
+        draft.id,
+        `queued for approval on ${candidate.id.slice(0, 8)}: ${content.slice(0, 50)}`,
+      );
+      return;
+    }
+
     if (this.config.dryRun) {
       logger.info(
         `🌐 COLONY_ENGAGEMENT_CLIENT [DRY RUN] would comment on post ${candidate.id} in c/${colony}: ${content.slice(0, 80)}... (${content.length} chars)`,
@@ -329,16 +371,16 @@ export class ColonyEngagementClient {
     }
 
     try {
-      await this.service.client.createComment(candidate.id, content);
+      await this.service.client.createComment(candidate.id, content, parentCommentId);
       logger.info(
-        `🌐 COLONY_ENGAGEMENT_CLIENT commented on post ${candidate.id} in c/${colony}`,
+        `🌐 COLONY_ENGAGEMENT_CLIENT commented on post ${candidate.id} in c/${colony}${parentCommentId ? ` (threaded under ${parentCommentId.slice(0, 8)})` : ""}`,
       );
       await this.markSeen(candidate.id);
-      this.service.incrementStat?.("commentsCreated");
+      this.service.incrementStat?.("commentsCreated", "autonomous");
       this.service.recordActivity?.(
         "comment_created",
         candidate.id,
-        `autoengage c/${colony}`,
+        `autoengage c/${colony}${parentCommentId ? ` threaded` : ""}`,
       );
       emitEvent(this.config.logFormat ?? "text", {
         level: "info",
@@ -347,12 +389,40 @@ export class ColonyEngagementClient {
         colony,
         bodyLength: content.length,
         autonomous: true,
-      }, `engagement comment on ${candidate.id}`);
+        parentCommentId,
+      }, `engagement comment on ${candidate.id}${parentCommentId ? ` → ${parentCommentId.slice(0, 8)}` : ""}`);
     } catch (err) {
       logger.warn(
         `COLONY_ENGAGEMENT_CLIENT: createComment(${candidate.id}) failed: ${String(err)}`,
       );
     }
+  }
+
+  /**
+   * Extract a `<reply_to>commentId</reply_to>` marker from generated
+   * engagement output. Returns `{ parentCommentId, cleanedBody }` —
+   * an empty parentCommentId means the agent chose to reply to the post
+   * as a whole (or didn't emit the marker at all). The marker convention
+   * was added in v0.14.0 to let engagement replies thread under a
+   * specific thread comment rather than landing at the top level.
+   */
+  private extractReplyTarget(
+    content: string,
+    threadComments: CommentLike[],
+  ): { parentCommentId?: string; cleanedBody: string } {
+    const markerRegex = /<reply_to>\s*([^<\s]+)\s*<\/reply_to>/i;
+    const match = content.match(markerRegex);
+    if (!match) return { cleanedBody: content.trim() };
+
+    const targetId = match[1]!;
+    const cleanedBody = content.replace(markerRegex, "").trim();
+
+    // Only honor the target if it's actually in the thread comments we
+    // showed the model — defends against hallucinated UUIDs.
+    const valid = threadComments.some((c) => c.id === targetId);
+    if (!valid) return { cleanedBody };
+
+    return { parentCommentId: targetId, cleanedBody };
   }
 
   private buildPrompt(
@@ -390,10 +460,15 @@ export class ColonyEngagementClient {
           ...threadComments.map((c, i) => {
             const commenter = c.author?.username ?? "unknown";
             const text = (c.body ?? "").slice(0, 500);
-            return `${i + 1}. @${commenter}: ${text}`;
+            const idTag = c.id ? ` [id=${c.id}]` : "";
+            return `${i + 1}. @${commenter}${idTag}: ${text}`;
           }),
         ]
       : [];
+
+    const replyToHint = threadComments.length
+      ? "\nIf your comment is specifically addressing one of the thread comments above, prefix your output with `<reply_to>COMMENT_ID</reply_to>` on its own line using the id from the listing — your comment will be threaded under that comment. If you're responding to the post as a whole, omit the marker."
+      : "";
 
     return [
       `You are ${character.name}, an AI agent on The Colony (thecolony.cc).`,
@@ -412,12 +487,13 @@ export class ColonyEngagementClient {
       threadComments.length
         ? "Task: Write a short-form comment (2-4 sentences) that advances the conversation. Reply to the thread as a whole, not just the OP — you can engage with or build on what specific commenters said. Substantive only."
         : "Task: Write a short-form comment (2-4 sentences) replying to this post. Substantive only — add information, a specific observation, a concrete question, or a correction.",
+      replyToHint,
       "Do NOT restate the post. Do NOT thank the author. Do NOT say \"interesting\" or \"great point\".",
       "If you have nothing substantive to add, output exactly SKIP on a single line.",
       this.config.styleHint
         ? `Additional style guidance: ${this.config.styleHint}`
         : "",
-      "Do NOT wrap your output in XML tags. Output only the comment text or SKIP.",
+      "Do NOT wrap your output in other XML tags (the reply_to marker described above is the only exception). Output only the comment text or SKIP.",
     ]
       .filter(Boolean)
       .join("\n");
@@ -567,6 +643,38 @@ export class ColonyEngagementClient {
         `COLONY_ENGAGEMENT_CLIENT: reactPost(${candidate.id}, ${emoji}) failed: ${String(err)}`,
       );
     }
+  }
+
+  /**
+   * Apply follow-graph weighting to the eligible candidate list.
+   * - "off": no-op, return as-is
+   * - "soft": partition into preferred vs other, preferred first
+   * - "strict": filter to preferred only (can leave list empty → no
+   *   engagement this tick, which is the intended behavior)
+   *
+   * v0.14.0 addition.
+   */
+  private applyFollowWeight(eligible: PostLike[]): PostLike[] {
+    const mode = this.config.followWeight ?? "off";
+    const preferred = new Set(
+      (this.config.preferredAuthors ?? []).map((u) => u.toLowerCase()),
+    );
+    if (mode === "off" || preferred.size === 0) return eligible;
+
+    const isPreferred = (p: PostLike) => {
+      const u = p.author?.username;
+      return typeof u === "string" && preferred.has(u.toLowerCase());
+    };
+
+    if (mode === "strict") {
+      return eligible.filter(isPreferred);
+    }
+    // soft: preferred surface first
+    return [...eligible].sort((a, b) => {
+      const aPref = isPreferred(a) ? 1 : 0;
+      const bPref = isPreferred(b) ? 1 : 0;
+      return bPref - aPref;
+    });
   }
 
   /**

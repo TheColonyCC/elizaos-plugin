@@ -78,7 +78,7 @@ export const replyColonyAction: Action = {
     try {
       const comment = await service.client.createComment(postId, body, parentId);
       logger.info(`REPLY_COLONY_POST: created comment ${comment.id} on post ${postId}`);
-      service.incrementStat?.("commentsCreated");
+      service.incrementStat?.("commentsCreated", "action");
       service.recordActivity?.("comment_created", postId, `reply to ${postId.slice(0, 8)}`);
       callback?.({
         text: `Replied on https://thecolony.cc/post/${postId}`,
