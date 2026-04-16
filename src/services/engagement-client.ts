@@ -38,6 +38,7 @@ import { cleanGeneratedPost } from "./post-client.js";
 import { scorePost } from "./post-scorer.js";
 import { emitEvent } from "../utils/emitEvent.js";
 import { DraftQueue } from "./draft-queue.js";
+import { readWatchList, writeWatchList, type WatchEntry } from "../actions/watchPost.js";
 
 const CACHE_KEY_PREFIX = "colony/engagement-client/seen";
 const SEEN_RING_SIZE = 100;
@@ -200,6 +201,16 @@ export class ColonyEngagementClient {
     }
     if (this.service.isPausedForBackoff?.()) {
       logger.debug("COLONY_ENGAGEMENT_CLIENT: skipping tick — service paused for karma backoff");
+      return;
+    }
+
+    // v0.15.0: check operator-supplied watch list for posts with new
+    // comments before the normal round-robin. If we find one, engage
+    // with that instead — this is the targeted-attention path from
+    // the WATCH_COLONY_POST action.
+    const watchedCandidate = await this.pickWatchedCandidateWithNewActivity();
+    if (watchedCandidate) {
+      await this.engageWithWatched(watchedCandidate);
       return;
     }
 
@@ -708,6 +719,165 @@ export class ColonyEngagementClient {
     if (typeof rt.getCache !== "function") return [];
     const cached = await rt.getCache<string[]>(this.cacheKey());
     return Array.isArray(cached) ? cached : [];
+  }
+
+  /**
+   * v0.15.0: look at the operator's watch list (populated via the
+   * WATCH_COLONY_POST action) and return a watched post that has
+   * accumulated new comments since the watch was added. Returns null
+   * if none found or on any error — the caller falls back to the
+   * normal round-robin candidate selection.
+   */
+  private async pickWatchedCandidateWithNewActivity(): Promise<{
+    entry: WatchEntry;
+    newCommentCount: number;
+  } | null> {
+    const username = (this.service as unknown as { username?: string }).username;
+    const list = await readWatchList(this.runtime, username);
+    if (!list.length) return null;
+
+    for (const entry of list) {
+      try {
+        const post = (await this.service.client.getPost(entry.postId)) as {
+          comment_count?: number;
+        };
+        const current = typeof post?.comment_count === "number" ? post.comment_count : 0;
+        if (current > entry.lastCommentCount) {
+          return { entry, newCommentCount: current };
+        }
+      } catch (err) {
+        logger.debug(
+          `COLONY_ENGAGEMENT_CLIENT: watched post ${entry.postId} fetch failed: ${String(err)}`,
+        );
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Engage with a watched post that has new comments. Updates the
+   * watch-list baseline after engagement so we don't immediately
+   * re-fire next tick.
+   */
+  private async engageWithWatched(watched: {
+    entry: WatchEntry;
+    newCommentCount: number;
+  }): Promise<void> {
+    const postId = watched.entry.postId;
+    let post: PostLike;
+    try {
+      post = (await this.service.client.getPost(postId)) as PostLike;
+    } catch (err) {
+      logger.warn(
+        `COLONY_ENGAGEMENT_CLIENT: watched post ${postId} could not be fetched for engagement: ${String(err)}`,
+      );
+      return;
+    }
+
+    const threadComments = await this.fetchThreadComments(postId);
+    const prompt = this.buildPrompt("watched", post, threadComments);
+    if (!prompt) return;
+
+    let generated: string;
+    try {
+      const modelType = (this.config.modelType ?? ModelType.TEXT_SMALL) as never;
+      generated = String(
+        await this.runtime.useModel(modelType, {
+          prompt,
+          temperature: this.config.temperature,
+          maxTokens: this.config.maxTokens,
+        }),
+      ).trim();
+    } catch (err) {
+      logger.warn(
+        `COLONY_ENGAGEMENT_CLIENT: watched-engagement generation failed for ${postId}: ${String(err)}`,
+      );
+      return;
+    }
+
+    const rawContent = cleanGeneratedPost(generated);
+    if (!rawContent) return;
+
+    const { parentCommentId, cleanedBody } = this.extractReplyTarget(
+      rawContent,
+      threadComments,
+    );
+    const content = cleanedBody || rawContent;
+
+    if (this.config.selfCheck ?? true) {
+      const score = await scorePost(this.runtime, {
+        title: `comment on ${post.title ?? postId}`,
+        body: content,
+      }, {
+        bannedPatterns: this.config.bannedPatterns,
+        modelType: this.config.scorerModelType,
+      });
+      if (score === "SPAM" || score === "INJECTION" || score === "BANNED") {
+        logger.warn(
+          `🌐 COLONY_ENGAGEMENT_CLIENT: self-check rejected watched-post comment as ${score}`,
+        );
+        this.service.incrementStat?.("selfCheckRejections");
+        return;
+      }
+    }
+
+    // Approval mode: queue instead of publishing
+    if (this.config.approvalRequired && this.config.draftQueue) {
+      await this.config.draftQueue.enqueue("comment", "engagement_client", {
+        postId,
+        body: content,
+        ...(parentCommentId ? { parentCommentId } : {}),
+      });
+      await this.updateWatchBaseline(watched.entry.postId, watched.newCommentCount);
+      return;
+    }
+
+    if (this.config.dryRun) {
+      logger.info(
+        `🌐 COLONY_ENGAGEMENT_CLIENT [DRY RUN] would engage watched post ${postId}: ${content.slice(0, 80)}...`,
+      );
+      await this.updateWatchBaseline(watched.entry.postId, watched.newCommentCount);
+      return;
+    }
+
+    try {
+      await this.service.client.createComment(postId, content, parentCommentId);
+      logger.info(
+        `🌐 COLONY_ENGAGEMENT_CLIENT commented on watched post ${postId}${parentCommentId ? ` (threaded under ${parentCommentId.slice(0, 8)})` : ""}`,
+      );
+      this.service.incrementStat?.("commentsCreated", "autonomous");
+      this.service.recordActivity?.(
+        "comment_created",
+        postId,
+        `watched-engagement${parentCommentId ? " threaded" : ""}`,
+      );
+      emitEvent(this.config.logFormat ?? "text", {
+        level: "info",
+        event: "comment.created",
+        postId,
+        bodyLength: content.length,
+        autonomous: true,
+        watched: true,
+        parentCommentId,
+      }, `watched-engagement comment on ${postId}`);
+      await this.updateWatchBaseline(watched.entry.postId, watched.newCommentCount);
+    } catch (err) {
+      logger.warn(
+        `COLONY_ENGAGEMENT_CLIENT: watched-engagement createComment(${postId}) failed: ${String(err)}`,
+      );
+    }
+  }
+
+  private async updateWatchBaseline(
+    postId: string,
+    newBaseline: number,
+  ): Promise<void> {
+    const username = (this.service as unknown as { username?: string }).username;
+    const list = await readWatchList(this.runtime, username);
+    const next = list.map((e) =>
+      e.postId === postId ? { ...e, lastCommentCount: newBaseline } : e,
+    );
+    await writeWatchList(this.runtime, username, next);
   }
 
   private async markSeen(postId: string): Promise<void> {

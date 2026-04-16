@@ -34,6 +34,7 @@ import ColonyPlugin, {
   watchColonyPostAction,
   unwatchColonyPostAction,
   listWatchedPostsAction,
+  colonyFirstRunAction,
   colonyFeedProvider,
 } from "../index.js";
 import { fakeRuntime } from "./helpers.js";
@@ -86,6 +87,7 @@ describe("ColonyPlugin", () => {
       watchColonyPostAction,
       unwatchColonyPostAction,
       listWatchedPostsAction,
+      colonyFirstRunAction,
     ]);
     expect(ColonyPlugin.providers).toContain(colonyFeedProvider);
   });

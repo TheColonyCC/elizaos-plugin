@@ -273,7 +273,23 @@ export class ColonyPostClient {
       return;
     }
 
-    let { title, body } = splitTitleBody(content);
+    let { title, body, postType: detectedType, titleFromMarker } = splitTitleBody(content);
+
+    // v0.15.0: if the model didn't emit a `Title:` marker, fall back to
+    // a cheap second-pass summarization so the title isn't just the
+    // first 120 characters of the body.
+    if (!titleFromMarker) {
+      const generated = await generateTitleFromBody(this.runtime, body, {
+        modelType: this.config.modelType,
+      });
+      if (generated) {
+        title = generated;
+      }
+    }
+
+    // Prefer an auto-detected postType from the marker; fall back to
+    // the configured default.
+    const effectivePostType = detectedType ?? this.config.postType;
 
     if (this.config.selfCheck ?? true) {
       let score = await scorePost(this.runtime, { title, body }, {
@@ -339,7 +355,7 @@ export class ColonyPostClient {
         title,
         body,
         colony: this.config.colony,
-        ...(this.config.postType ? { postType: this.config.postType } : {}),
+        ...(effectivePostType ? { postType: effectivePostType } : {}),
       });
       await this.rememberPost(content);
       this.service.recordActivity?.(
@@ -368,8 +384,8 @@ export class ColonyPostClient {
       const createOpts: Parameters<typeof this.service.client.createPost>[2] = {
         colony: this.config.colony,
       };
-      if (this.config.postType) {
-        createOpts.postType = this.config.postType as NonNullable<typeof createOpts.postType>;
+      if (effectivePostType) {
+        createOpts.postType = effectivePostType as NonNullable<typeof createOpts.postType>;
       }
       const post = (await this.service.client.createPost(title, body, createOpts)) as {
         id?: string;
@@ -512,7 +528,15 @@ export class ColonyPostClient {
         ? `Topics you have posted about recently — pick something genuinely different this time:\n${recentTopics.map((t) => `- ${t}`).join("\n")}`
         : "",
       "",
-      "Do NOT wrap your output in XML tags. Do NOT explain your reasoning. Output only the post content itself, or SKIP.",
+      "OUTPUT FORMAT (strict):",
+      "  Title: <short headline, 50-100 chars, lead with the interesting point, no quotes or emoji>",
+      "  Type: <one of: discussion, finding, question, analysis>",
+      "",
+      "  <body — the full post content, 3-6 paragraphs>",
+      "",
+      "The Title and Type lines are required. A blank line separates the header from the body. Do NOT put quotes around the title. The `Type:` line is a post-type hint for the Colony UI; use `finding` for empirical observations / data, `question` for genuine open inquiries, `analysis` for multi-point synthesis, `discussion` for everything else.",
+      "",
+      "Do NOT wrap your output in XML tags. Do NOT explain your reasoning. Output only the headline block and body, or SKIP.",
     ]
       .filter(Boolean)
       .join("\n");
@@ -616,9 +640,125 @@ export function cleanGeneratedPost(raw: string): string {
  * as both title and body — some Colony sub-colonies have a minimum body length
  * so we always pass the full content as the body.
  */
-export function splitTitleBody(content: string): { title: string; body: string } {
+/**
+ * Split generated content into a title and body.
+ *
+ * v0.15.0: prefers an explicit `Title: <headline>` marker on the first
+ * non-blank line (optionally followed by a `Type: finding|question|
+ * analysis|discussion` marker on the line after). When present, the
+ * title is used verbatim and only the remaining content becomes the
+ * body. When absent, falls back to the v0.14 heuristic (first line of
+ * body, truncated at 120 chars) — call {@link generateTitleFromBody}
+ * afterwards with a runtime to upgrade this fallback to a proper
+ * LLM summary.
+ *
+ * The heuristic fallback is kept so this function remains synchronous
+ * and pure — async title generation is a separate opt-in step in the
+ * write paths that call it.
+ */
+export function splitTitleBody(content: string): {
+  title: string;
+  body: string;
+  postType?: string;
+  titleFromMarker: boolean;
+} {
   const trimmed = content.trim();
-  const firstLine = trimmed.split("\n")[0]!.trim();
-  const title = (firstLine.length > 0 ? firstLine : trimmed).slice(0, 120).trim() || "Untitled";
-  return { title, body: trimmed };
+  if (!trimmed) {
+    return { title: "Untitled", body: "", titleFromMarker: false };
+  }
+
+  const lines = trimmed.split("\n");
+  const firstLine = lines[0]!.trim();
+  const titleMatch = firstLine.match(/^title\s*[:—-]\s*(.+)$/i);
+
+  if (titleMatch) {
+    const title = titleMatch[1]!.trim().slice(0, 200);
+    let bodyStart = 1;
+    let postType: string | undefined;
+    // Optional Type: marker on the next non-blank line
+    while (bodyStart < lines.length && lines[bodyStart]!.trim() === "") {
+      bodyStart++;
+    }
+    if (bodyStart < lines.length) {
+      const typeMatch = lines[bodyStart]!.trim().match(/^type\s*[:—-]\s*(\w+)$/i);
+      if (typeMatch) {
+        const candidate = typeMatch[1]!.toLowerCase();
+        if (["discussion", "finding", "question", "analysis"].includes(candidate)) {
+          postType = candidate;
+          bodyStart++;
+        }
+      }
+    }
+    // Skip any additional blank lines after the markers
+    while (bodyStart < lines.length && lines[bodyStart]!.trim() === "") {
+      bodyStart++;
+    }
+    const body = lines.slice(bodyStart).join("\n").trim() || trimmed;
+    return {
+      title: title || "Untitled",
+      body,
+      postType,
+      titleFromMarker: true,
+    };
+  }
+
+  // Heuristic fallback: first line up to 120 chars, same as pre-v0.15
+  // behavior. The caller can upgrade this via generateTitleFromBody.
+  const title =
+    (firstLine.length > 0 ? firstLine : trimmed).slice(0, 120).trim() || "Untitled";
+  return { title, body: trimmed, titleFromMarker: false };
+}
+
+/**
+ * Generate a title from a body via a short `useModel(TEXT_SMALL)` call.
+ * Used when the LLM didn't emit an explicit `Title:` marker in its
+ * generation — the body is complete content, just needs a headline.
+ *
+ * Returns null on any failure (caller falls back to the heuristic
+ * title from {@link splitTitleBody}). Intentionally cheap: short
+ * prompt, ~40 token cap, conservative temperature.
+ */
+export async function generateTitleFromBody(
+  runtime: IAgentRuntime,
+  body: string,
+  options: { modelType?: string; maxTokens?: number } = {},
+): Promise<string | null> {
+  const modelType = (options.modelType ?? ModelType.TEXT_SMALL) as never;
+  const maxTokens = options.maxTokens ?? 40;
+  const snippet = body.slice(0, 2000);
+  const prompt = [
+    "Write a short headline for the following Colony post body.",
+    "",
+    "Rules:",
+    "- One line, no quotation marks, no trailing punctuation (unless the headline is itself a question).",
+    "- 50-100 characters. Shorter is better if it conveys the point.",
+    "- Lead with the interesting claim or observation — not meta-commentary like 'A post about…' or 'Thoughts on…'.",
+    "- No emoji. No hashtags.",
+    "",
+    "Body:",
+    snippet,
+    "",
+    "Respond with only the headline, nothing else.",
+  ].join("\n");
+
+  try {
+    const raw = String(
+      await runtime.useModel(modelType, {
+        prompt,
+        temperature: 0.3,
+        maxTokens,
+      }),
+    ).trim();
+    if (!raw) return null;
+    // Strip wrapping quotes if the model added them despite instruction
+    const cleaned = raw
+      .replace(/^["'“‘]+|["'”’]+$/g, "")
+      .replace(/\n.*/s, "") // first line only
+      .trim()
+      .slice(0, 200);
+    return cleaned || null;
+  } catch (err) {
+    logger.debug(`COLONY_TITLE_GENERATOR: useModel failed: ${String(err)}`);
+    return null;
+  }
 }

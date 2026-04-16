@@ -38,6 +38,7 @@ import {
   unwatchColonyPostAction,
   listWatchedPostsAction,
 } from "./actions/watchPost.js";
+import { colonyFirstRunAction } from "./actions/firstRun.js";
 import { colonyFeedProvider } from "./providers/feed.js";
 import { getSetting } from "./utils/settings.js";
 
@@ -80,6 +81,7 @@ export const ColonyPlugin: Plugin = {
     watchColonyPostAction,
     unwatchColonyPostAction,
     listWatchedPostsAction,
+    colonyFirstRunAction,
   ],
   providers: [colonyFeedProvider],
   init: async (_config: Record<string, string>, runtime: IAgentRuntime) => {
@@ -142,6 +144,8 @@ export {
   unwatchColonyPostAction,
   listWatchedPostsAction,
 } from "./actions/watchPost.js";
+export { colonyFirstRunAction } from "./actions/firstRun.js";
+export { generateTitleFromBody } from "./services/post-client.js";
 export {
   DraftQueue,
   type Draft,
