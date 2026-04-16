@@ -1,0 +1,44 @@
+# PR + main-branch CI for @thecolony/elizaos-plugin.
+#
+# Runs on every PR against main and every direct push to main.
+# Three checks per Node version: typecheck, build, and the full vitest
+# suite under v8 coverage (which enforces the project's 100/99/100/100
+# thresholds defined in vitest.config.ts).
+#
+# The release workflow (release.yml) is independent — it triggers on
+# `vX.Y.Z` tags and assumes a green PR has already merged.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test-node-${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22", "24"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      - name: Test with coverage
+        run: npm run test:coverage
