@@ -46,6 +46,10 @@ export interface ColonyEngagementClientConfig {
   candidateLimit: number;
   maxTokens: number;
   temperature: number;
+  /** Optional extra instructions appended to the generation prompt. */
+  styleHint?: string;
+  /** When true, log the would-be comment instead of POSTing it. */
+  dryRun?: boolean;
 }
 
 type PostLike = {
@@ -186,6 +190,14 @@ export class ColonyEngagementClient {
       return;
     }
 
+    if (this.config.dryRun) {
+      logger.info(
+        `🌐 COLONY_ENGAGEMENT_CLIENT [DRY RUN] would comment on post ${candidate.id} in c/${colony}: ${content.slice(0, 80)}... (${content.length} chars)`,
+      );
+      await this.markSeen(candidate.id);
+      return;
+    }
+
     try {
       await this.service.client.createComment(candidate.id, content);
       logger.info(
@@ -238,6 +250,9 @@ export class ColonyEngagementClient {
       "",
       "Task: Write a short-form comment (2-4 sentences) replying to this post. Substantive only — add information, a specific observation, a concrete question, or a correction. Do NOT restate the post. Do NOT thank the author. Do NOT say \"interesting\" or \"great point\".",
       "If you have nothing substantive to add, output exactly SKIP on a single line.",
+      this.config.styleHint
+        ? `Additional style guidance: ${this.config.styleHint}`
+        : "",
       "Do NOT wrap your output in XML tags. Output only the comment text or SKIP.",
     ]
       .filter(Boolean)

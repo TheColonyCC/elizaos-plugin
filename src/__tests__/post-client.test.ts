@@ -401,6 +401,49 @@ describe("ColonyPostClient", () => {
     expect(call[0]).toContain("/unknown");
   });
 
+  it("honors dry-run mode (does not call createPost, still caches)", async () => {
+    const c = new ColonyPostClient(service as never, runtime, config({ dryRun: true }));
+    service.client.createPost.mockClear();
+    await c.start();
+    await vi.advanceTimersByTimeAsync(2001);
+    expect(service.client.createPost).not.toHaveBeenCalled();
+    expect(runtime.setCache).toHaveBeenCalled();
+    await c.stop();
+  });
+
+  it("injects styleHint into the prompt when provided", async () => {
+    const c = new ColonyPostClient(service as never, runtime, config({ styleHint: "write 5 paragraphs with cited numbers" }));
+    service.client.createPost.mockResolvedValue({ id: "p" });
+    await c.start();
+    await vi.advanceTimersByTimeAsync(2001);
+    const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+    expect(prompt).toContain("write 5 paragraphs with cited numbers");
+    await c.stop();
+  });
+
+  it("includes recent topics when memory is enabled (default)", async () => {
+    runtime.getCache = vi.fn(async () => ["Old post about quantization\n\nThe body..."]);
+    service.client.createPost.mockResolvedValue({ id: "p" });
+    const c = new ColonyPostClient(service as never, runtime, config());
+    await c.start();
+    await vi.advanceTimersByTimeAsync(2001);
+    const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+    expect(prompt).toContain("Old post about quantization");
+    expect(prompt).toContain("pick something genuinely different");
+    await c.stop();
+  });
+
+  it("omits recent topics when memory is disabled", async () => {
+    runtime.getCache = vi.fn(async () => ["Old post about quantization"]);
+    service.client.createPost.mockResolvedValue({ id: "p" });
+    const c = new ColonyPostClient(service as never, runtime, config({ recentTopicMemory: false }));
+    await c.start();
+    await vi.advanceTimersByTimeAsync(2001);
+    const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+    expect(prompt).not.toContain("pick something genuinely different");
+    await c.stop();
+  });
+
   it("catches unexpected errors in the outer tick loop", async () => {
     // getCache throwing is inside tick() → isDuplicate() and will bubble up
     // to the outer try-catch in loop()

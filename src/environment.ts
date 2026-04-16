@@ -9,12 +9,15 @@ export interface ColonyConfig {
   pollIntervalMs: number;
   coldStartWindowMs: number;
   notificationTypesIgnore: Set<string>;
+  dryRun: boolean;
   postEnabled: boolean;
   postIntervalMinMs: number;
   postIntervalMaxMs: number;
   postColony: string;
   postMaxTokens: number;
   postTemperature: number;
+  postStyleHint: string;
+  postRecentTopicMemory: boolean;
   engageEnabled: boolean;
   engageIntervalMinMs: number;
   engageIntervalMaxMs: number;
@@ -22,6 +25,7 @@ export interface ColonyConfig {
   engageCandidateLimit: number;
   engageMaxTokens: number;
   engageTemperature: number;
+  engageStyleHint: string;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -145,6 +149,16 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     ? Math.max(0, Math.min(2, parsedEngageTemp))
     : 0.8;
 
+  const dryRunRaw = getSetting(runtime, "COLONY_DRY_RUN", "false")!.toLowerCase();
+  const dryRun = dryRunRaw === "true" || dryRunRaw === "1" || dryRunRaw === "yes";
+
+  const postStyleHint = getSetting(runtime, "COLONY_POST_STYLE_HINT", "")!.trim();
+  const engageStyleHint = getSetting(runtime, "COLONY_ENGAGE_STYLE_HINT", "")!.trim();
+
+  const topicMemoryRaw = getSetting(runtime, "COLONY_POST_RECENT_TOPIC_MEMORY", "true")!.toLowerCase();
+  const postRecentTopicMemory =
+    topicMemoryRaw === "true" || topicMemoryRaw === "1" || topicMemoryRaw === "yes";
+
   return {
     apiKey,
     defaultColony,
@@ -153,12 +167,15 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     pollIntervalMs,
     coldStartWindowMs,
     notificationTypesIgnore,
+    dryRun,
     postEnabled,
     postIntervalMinMs,
     postIntervalMaxMs,
     postColony,
     postMaxTokens,
     postTemperature,
+    postStyleHint,
+    postRecentTopicMemory,
     engageEnabled,
     engageIntervalMinMs,
     engageIntervalMaxMs,
@@ -166,5 +183,6 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     engageCandidateLimit,
     engageMaxTokens,
     engageTemperature,
+    engageStyleHint,
   };
 }

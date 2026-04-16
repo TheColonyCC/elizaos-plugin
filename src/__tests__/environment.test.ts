@@ -32,12 +32,15 @@ describe("loadColonyConfig", () => {
       pollIntervalMs: 120000,
       coldStartWindowMs: 24 * 3600 * 1000,
       notificationTypesIgnore: new Set(["vote", "follow", "award", "tip_received"]),
+      dryRun: false,
       postEnabled: false,
       postIntervalMinMs: 5_400_000,
       postIntervalMaxMs: 10_800_000,
       postColony: "findings",
       postMaxTokens: 280,
       postTemperature: 0.9,
+      postStyleHint: "",
+      postRecentTopicMemory: true,
       engageEnabled: false,
       engageIntervalMinMs: 1_800_000,
       engageIntervalMaxMs: 3_600_000,
@@ -45,7 +48,23 @@ describe("loadColonyConfig", () => {
       engageCandidateLimit: 5,
       engageMaxTokens: 240,
       engageTemperature: 0.8,
+      engageStyleHint: "",
     });
+  });
+
+  it("parses COLONY_DRY_RUN and new v0.8.0 style/topic vars", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_DRY_RUN: "true",
+      COLONY_POST_STYLE_HINT: "3-6 paragraphs with numbers",
+      COLONY_ENGAGE_STYLE_HINT: "2 sentences max",
+      COLONY_POST_RECENT_TOPIC_MEMORY: "false",
+    });
+    const config = loadColonyConfig(runtime);
+    expect(config.dryRun).toBe(true);
+    expect(config.postStyleHint).toBe("3-6 paragraphs with numbers");
+    expect(config.engageStyleHint).toBe("2 sentences max");
+    expect(config.postRecentTopicMemory).toBe(false);
   });
 
   it("parses COLONY_POST_ENABLED + interval vars", () => {

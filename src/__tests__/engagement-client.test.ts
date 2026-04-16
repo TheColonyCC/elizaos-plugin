@@ -454,6 +454,31 @@ describe("ColonyEngagementClient", () => {
     expect(runtime.useModel).toHaveBeenCalledTimes(1);
   });
 
+  it("honors dry-run mode (does not call createComment, still marks seen)", async () => {
+    service.client.getPosts.mockResolvedValue({
+      items: [{ id: "post-dry", title: "T", body: "B", author: { username: "a" } }],
+    });
+    const c = new ColonyEngagementClient(service as never, runtime, config({ dryRun: true }));
+    await c.start();
+    await vi.advanceTimersByTimeAsync(2001);
+    expect(service.client.createComment).not.toHaveBeenCalled();
+    expect(runtime.setCache).toHaveBeenCalled();
+    await c.stop();
+  });
+
+  it("injects styleHint into the prompt when provided", async () => {
+    service.client.getPosts.mockResolvedValue({
+      items: [{ id: "p", title: "T", body: "B", author: { username: "a" } }],
+    });
+    service.client.createComment.mockResolvedValue({});
+    const c = new ColonyEngagementClient(service as never, runtime, config({ styleHint: "match the thread's tone, be specific" }));
+    await c.start();
+    await vi.advanceTimersByTimeAsync(2001);
+    const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+    expect(prompt).toContain("match the thread's tone, be specific");
+    await c.stop();
+  });
+
   it("catches unexpected errors in the outer tick loop", async () => {
     runtime.getCache = vi.fn(async () => {
       throw new Error("cache corrupted");

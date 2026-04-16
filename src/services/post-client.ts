@@ -34,10 +34,29 @@ export interface ColonyPostClientConfig {
   intervalMinMs: number;
   intervalMaxMs: number;
   colony: string;
-  /** Max tokens for each generation call. Keep small — Colony posts are short-form. */
+  /** Max tokens for each generation call. */
   maxTokens: number;
   /** Temperature for the TEXT_SMALL generation. Higher = more varied. */
   temperature: number;
+  /**
+   * Optional extra instructions appended to the generation prompt. Use this
+   * to override the default length/style expectations without editing the
+   * character file. Example: "Write 3-6 paragraphs, include numbers, cite
+   * one specific thread or paper."
+   */
+  styleHint?: string;
+  /**
+   * When true (default), the recent-posts dedup cache is surfaced back to
+   * the LLM as a list of "topics you've covered recently — pick something
+   * different" guidance. Prevents the agent from looping on the same
+   * subject tick after tick.
+   */
+  recentTopicMemory?: boolean;
+  /**
+   * When true, log the would-be post but do NOT call createPost. Useful
+   * for tuning the character prompt without polluting Colony.
+   */
+  dryRun?: boolean;
 }
 
 export class ColonyPostClient {
@@ -98,7 +117,7 @@ export class ColonyPostClient {
   }
 
   private async tick(): Promise<void> {
-    const prompt = this.buildPrompt();
+    const prompt = await this.buildPrompt();
     if (!prompt) return;
 
     let generated: string;
@@ -130,6 +149,14 @@ export class ColonyPostClient {
 
     const { title, body } = splitTitleBody(content);
 
+    if (this.config.dryRun) {
+      logger.info(
+        `📝 COLONY_POST_CLIENT [DRY RUN] would post to c/${this.config.colony}: ${title.slice(0, 80)}... (${body.length} chars)`,
+      );
+      await this.rememberPost(content);
+      return;
+    }
+
     try {
       const post = (await this.service.client.createPost(title, body, {
         colony: this.config.colony,
@@ -143,7 +170,7 @@ export class ColonyPostClient {
     }
   }
 
-  private buildPrompt(): string | null {
+  private async buildPrompt(): Promise<string | null> {
     const character = this.runtime.character as unknown as {
       name?: string;
       bio?: string | string[];
@@ -181,6 +208,14 @@ export class ColonyPostClient {
     const styleAll = character.style?.all?.join(" ") ?? "";
     const stylePost = character.style?.post?.join(" ") ?? "";
 
+    const recentTopics =
+      (this.config.recentTopicMemory ?? true)
+        ? extractRecentTopics(await this.recentPosts())
+        : [];
+
+    const defaultLengthRule =
+      "- Top-level post: 3-6 paragraphs, substantive and specific. Lead with the interesting point, then develop it with numbers, concrete examples, tradeoffs, or references. A post should stand on its own — a reader landing cold should understand why it matters in the first paragraph.";
+
     return [
       `You are ${character.name}, an AI agent on The Colony (thecolony.cc), an AI-agent-only social network.`,
       bio ? `Background: ${bio}` : "",
@@ -188,16 +223,22 @@ export class ColonyPostClient {
       styleAll ? `Your voice: ${styleAll}` : "",
       stylePost ? `Post style: ${stylePost}` : "",
       examples.length
-        ? `Examples of your voice (from past replies):\n${examples.map((e) => `- ${e}`).join("\n")}`
+        ? `Examples of your voice (from past replies — note these are SHORT comments, your top-level posts should be longer and more developed):\n${examples.map((e) => `- ${e}`).join("\n")}`
         : "",
       "",
-      `Task: Generate a single short-form post for The Colony's c/${this.config.colony} sub-colony.`,
+      `Task: Generate a single top-level post for The Colony's c/${this.config.colony} sub-colony.`,
       "Rules:",
-      "- 2-4 sentences. Short-form. No marketing voice, no emoji.",
-      "- Concrete, specific, substantive. Prefer observations over questions.",
-      "- No throat-clearing preamble. Lead with the interesting point.",
-      "- Avoid topics you have already posted about recently.",
+      defaultLengthRule,
+      "- No marketing voice, no emoji, no throat-clearing preamble.",
+      "- Concrete, specific, substantive. Prefer observations with evidence over open-ended questions.",
       "- If you genuinely have nothing new to say, output exactly the word SKIP on a single line.",
+      this.config.styleHint
+        ? `Additional style guidance: ${this.config.styleHint}`
+        : "",
+      recentTopics.length
+        ? `Topics you have posted about recently — pick something genuinely different this time:\n${recentTopics.map((t) => `- ${t}`).join("\n")}`
+        : "",
+      "",
       "Do NOT wrap your output in XML tags. Do NOT explain your reasoning. Output only the post content itself, or SKIP.",
     ]
       .filter(Boolean)
@@ -241,6 +282,22 @@ export class ColonyPostClient {
     const next = [content, ...recent].slice(0, RECENT_POST_RING_SIZE);
     await rt.setCache(this.cacheKey(), next);
   }
+}
+
+/**
+ * Given the dedup cache (full recent post texts), extract a compact list of
+ * recent topic descriptions to feed back into the generation prompt. Uses
+ * the post's first line / title-like prefix, truncated so the overall
+ * prompt stays small even if the cache has long posts.
+ */
+export function extractRecentTopics(recent: string[]): string[] {
+  return recent
+    .map((content) => {
+      const firstLine = content.split("\n")[0]!.trim();
+      return firstLine.slice(0, 100);
+    })
+    .filter(Boolean)
+    .slice(0, 10);
 }
 
 /**

@@ -64,6 +64,9 @@ export class ColonyService extends Service {
         colony: service.colonyConfig.postColony,
         maxTokens: service.colonyConfig.postMaxTokens,
         temperature: service.colonyConfig.postTemperature,
+        styleHint: service.colonyConfig.postStyleHint,
+        recentTopicMemory: service.colonyConfig.postRecentTopicMemory,
+        dryRun: service.colonyConfig.dryRun,
       });
       await service.postClient.start();
     } else {
@@ -80,6 +83,8 @@ export class ColonyService extends Service {
         candidateLimit: service.colonyConfig.engageCandidateLimit,
         maxTokens: service.colonyConfig.engageMaxTokens,
         temperature: service.colonyConfig.engageTemperature,
+        styleHint: service.colonyConfig.engageStyleHint,
+        dryRun: service.colonyConfig.dryRun,
       });
       await service.engagementClient.start();
     } else {
