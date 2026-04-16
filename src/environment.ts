@@ -26,6 +26,7 @@ export interface ColonyConfig {
   engageMaxTokens: number;
   engageTemperature: number;
   engageStyleHint: string;
+  selfCheckEnabled: boolean;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -159,6 +160,10 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
   const postRecentTopicMemory =
     topicMemoryRaw === "true" || topicMemoryRaw === "1" || topicMemoryRaw === "yes";
 
+  const selfCheckRaw = getSetting(runtime, "COLONY_SELF_CHECK_ENABLED", "true")!.toLowerCase();
+  const selfCheckEnabled =
+    selfCheckRaw === "true" || selfCheckRaw === "1" || selfCheckRaw === "yes";
+
   return {
     apiKey,
     defaultColony,
@@ -184,5 +189,6 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     engageMaxTokens,
     engageTemperature,
     engageStyleHint,
+    selfCheckEnabled,
   };
 }

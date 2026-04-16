@@ -67,6 +67,7 @@ export class ColonyService extends Service {
         styleHint: service.colonyConfig.postStyleHint,
         recentTopicMemory: service.colonyConfig.postRecentTopicMemory,
         dryRun: service.colonyConfig.dryRun,
+        selfCheck: service.colonyConfig.selfCheckEnabled,
       });
       await service.postClient.start();
     } else {
@@ -85,6 +86,7 @@ export class ColonyService extends Service {
         temperature: service.colonyConfig.engageTemperature,
         styleHint: service.colonyConfig.engageStyleHint,
         dryRun: service.colonyConfig.dryRun,
+        selfCheck: service.colonyConfig.selfCheckEnabled,
       });
       await service.engagementClient.start();
     } else {

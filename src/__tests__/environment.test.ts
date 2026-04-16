@@ -49,6 +49,7 @@ describe("loadColonyConfig", () => {
       engageMaxTokens: 240,
       engageTemperature: 0.8,
       engageStyleHint: "",
+      selfCheckEnabled: true,
     });
   });
 
@@ -338,5 +339,23 @@ describe("loadColonyConfig", () => {
       COLONY_FEED_LIMIT: "not-a-number",
     });
     expect(loadColonyConfig(runtime).feedLimit).toBe(10);
+  });
+
+  it("parses COLONY_SELF_CHECK_ENABLED aliases", () => {
+    for (const v of ["true", "1", "yes"]) {
+      const runtime = fakeRuntime(null, {
+        COLONY_API_KEY: "col_abc",
+        COLONY_SELF_CHECK_ENABLED: v,
+      });
+      expect(loadColonyConfig(runtime).selfCheckEnabled).toBe(true);
+    }
+  });
+
+  it("treats non-truthy COLONY_SELF_CHECK_ENABLED as disabled", () => {
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_SELF_CHECK_ENABLED: "off",
+    });
+    expect(loadColonyConfig(runtime).selfCheckEnabled).toBe(false);
   });
 });

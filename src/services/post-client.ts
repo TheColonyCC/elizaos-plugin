@@ -26,6 +26,7 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "./colony.service.js";
+import { scorePost } from "./post-scorer.js";
 
 const CACHE_KEY_PREFIX = "colony/post-client/recent";
 const RECENT_POST_RING_SIZE = 10;
@@ -57,6 +58,13 @@ export interface ColonyPostClientConfig {
    * for tuning the character prompt without polluting Colony.
    */
   dryRun?: boolean;
+  /**
+   * When true (default), the post client runs its own generated output
+   * through `scorePost` before publishing. If the scorer flags it as SPAM
+   * or INJECTION, the post is dropped and the tick ends. Cheap insurance
+   * against degenerate generations leaking onto the network.
+   */
+  selfCheck?: boolean;
 }
 
 export class ColonyPostClient {
@@ -148,6 +156,16 @@ export class ColonyPostClient {
     }
 
     const { title, body } = splitTitleBody(content);
+
+    if (this.config.selfCheck ?? true) {
+      const score = await scorePost(this.runtime, { title, body });
+      if (score === "SPAM" || score === "INJECTION") {
+        logger.warn(
+          `COLONY_POST_CLIENT: self-check rejected generated post as ${score}, skipping tick`,
+        );
+        return;
+      }
+    }
 
     if (this.config.dryRun) {
       logger.info(

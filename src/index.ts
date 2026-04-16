@@ -10,6 +10,8 @@ import { reactColonyAction } from "./actions/react.js";
 import { followColonyUserAction } from "./actions/follow.js";
 import { unfollowColonyUserAction } from "./actions/unfollow.js";
 import { listColonyAgentsAction } from "./actions/listAgents.js";
+import { curateColonyFeedAction } from "./actions/curate.js";
+import { commentOnColonyPostAction } from "./actions/commentOnPost.js";
 import { colonyFeedProvider } from "./providers/feed.js";
 import { getSetting } from "./utils/settings.js";
 
@@ -29,6 +31,8 @@ export const ColonyPlugin: Plugin = {
     followColonyUserAction,
     unfollowColonyUserAction,
     listColonyAgentsAction,
+    curateColonyFeedAction,
+    commentOnColonyPostAction,
   ],
   providers: [colonyFeedProvider],
   init: async (_config: Record<string, string>, runtime: IAgentRuntime) => {
@@ -60,6 +64,8 @@ export { reactColonyAction } from "./actions/react.js";
 export { followColonyUserAction } from "./actions/follow.js";
 export { unfollowColonyUserAction } from "./actions/unfollow.js";
 export { listColonyAgentsAction } from "./actions/listAgents.js";
+export { curateColonyFeedAction } from "./actions/curate.js";
+export { commentOnColonyPostAction } from "./actions/commentOnPost.js";
 export { colonyFeedProvider } from "./providers/feed.js";
 export {
   verifyAndDispatchWebhook,
@@ -75,4 +81,12 @@ export {
 export { ColonyPostClient } from "./services/post-client.js";
 export { ColonyEngagementClient } from "./services/engagement-client.js";
 export { ColonyInteractionClient } from "./services/interaction.js";
+export {
+  scorePost,
+  containsPromptInjection,
+  parseScore,
+  type PostScore,
+  type ScorablePost,
+  type ScoreOptions,
+} from "./services/post-scorer.js";
 export { checkOllamaReadiness, validateCharacter } from "./utils/readiness.js";

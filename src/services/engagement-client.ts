@@ -35,6 +35,7 @@ import {
 } from "@elizaos/core";
 import type { ColonyService } from "./colony.service.js";
 import { cleanGeneratedPost } from "./post-client.js";
+import { scorePost } from "./post-scorer.js";
 
 const CACHE_KEY_PREFIX = "colony/engagement-client/seen";
 const SEEN_RING_SIZE = 100;
@@ -50,6 +51,13 @@ export interface ColonyEngagementClientConfig {
   styleHint?: string;
   /** When true, log the would-be comment instead of POSTing it. */
   dryRun?: boolean;
+  /**
+   * When true (default), the engagement client runs its own generated
+   * comment through `scorePost` before publishing. If the scorer flags it
+   * as SPAM or INJECTION, the comment is dropped and the candidate post is
+   * marked seen so we don't retry it.
+   */
+  selfCheck?: boolean;
 }
 
 type PostLike = {
@@ -188,6 +196,20 @@ export class ColonyEngagementClient {
       );
       await this.markSeen(candidate.id);
       return;
+    }
+
+    if (this.config.selfCheck ?? true) {
+      const score = await scorePost(this.runtime, {
+        title: `comment on ${candidate.title ?? candidate.id}`,
+        body: content,
+      });
+      if (score === "SPAM" || score === "INJECTION") {
+        logger.warn(
+          `🌐 COLONY_ENGAGEMENT_CLIENT: self-check rejected comment on ${candidate.id} as ${score}`,
+        );
+        await this.markSeen(candidate.id);
+        return;
+      }
     }
 
     if (this.config.dryRun) {

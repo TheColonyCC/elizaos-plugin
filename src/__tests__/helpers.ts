@@ -70,6 +70,11 @@ export interface FakeService {
     engageCandidateLimit: number;
     engageMaxTokens: number;
     engageTemperature: number;
+    dryRun?: boolean;
+    postStyleHint?: string;
+    postRecentTopicMemory?: boolean;
+    engageStyleHint?: string;
+    selfCheckEnabled?: boolean;
   };
 }
 
@@ -101,6 +106,11 @@ export function fakeService(
       engageCandidateLimit: 5,
       engageMaxTokens: 240,
       engageTemperature: 0.8,
+      dryRun: false,
+      postStyleHint: "",
+      postRecentTopicMemory: true,
+      engageStyleHint: "",
+      selfCheckEnabled: false,
       ...configOverrides,
     },
   };
