@@ -188,4 +188,13 @@ export {
   type PluginEvent,
   type PluginEventLevel,
 } from "./utils/emitEvent.js";
-export { checkOllamaReadiness, validateCharacter } from "./utils/readiness.js";
+export {
+  checkOllamaReadiness,
+  isOllamaReachable,
+  validateCharacter,
+} from "./utils/readiness.js";
+export {
+  looksLikeModelError,
+  stripLLMArtifacts,
+  validateGeneratedOutput,
+} from "./services/output-validator.js";

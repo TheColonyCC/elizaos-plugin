@@ -22,6 +22,17 @@ export interface ColonyServiceStats {
   postsCreatedFromActions: number;
   commentsCreatedAutonomous: number;
   commentsCreatedFromActions: number;
+  /**
+   * v0.16.0: per-tick LLM provider health. Bumped from the generation
+   * paths in post-client, engagement-client, and the dispatch reply
+   * callback. Lets the operator see at a glance whether Ollama is
+   * healthy ("34 successes / 0 failures in the last hour") or thrashing
+   * ("12 successes / 18 failures — check your model endpoint"). Failures
+   * include both thrown exceptions AND rejected model-error strings that
+   * never made it past `validateGeneratedOutput`.
+   */
+  llmCallsSuccess: number;
+  llmCallsFailed: number;
 }
 
 export type StatSource = "autonomous" | "action";
@@ -76,7 +87,22 @@ export class ColonyService extends Service {
     postsCreatedFromActions: 0,
     commentsCreatedAutonomous: 0,
     commentsCreatedFromActions: 0,
+    llmCallsSuccess: 0,
+    llmCallsFailed: 0,
   };
+
+  /**
+   * v0.16.0: bump the LLM-health counters from generation paths. Separate
+   * helper so the call sites stay a one-liner and don't have to remember
+   * the exact stat-key names.
+   */
+  recordLlmCall(outcome: "success" | "failure"): void {
+    if (outcome === "success") {
+      this.stats = { ...this.stats, llmCallsSuccess: this.stats.llmCallsSuccess + 1 };
+    } else {
+      this.stats = { ...this.stats, llmCallsFailed: this.stats.llmCallsFailed + 1 };
+    }
+  }
 
   public karmaHistory: KarmaSnapshot[] = [];
   public pausedUntilTs = 0;

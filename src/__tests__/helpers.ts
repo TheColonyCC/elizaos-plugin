@@ -118,7 +118,14 @@ export interface FakeService {
     votesCast: number;
     selfCheckRejections: number;
     startedAt: number;
+    postsCreatedAutonomous?: number;
+    postsCreatedFromActions?: number;
+    commentsCreatedAutonomous?: number;
+    commentsCreatedFromActions?: number;
+    llmCallsSuccess?: number;
+    llmCallsFailed?: number;
   };
+  recordLlmCall?: ReturnType<typeof vi.fn>;
   pausedUntilTs?: number;
   karmaHistory?: Array<{ ts: number; karma: number }>;
   currentKarma?: number;
@@ -204,7 +211,14 @@ export function fakeService(
       votesCast: 0,
       selfCheckRejections: 0,
       startedAt: Date.now(),
+      postsCreatedAutonomous: 0,
+      postsCreatedFromActions: 0,
+      commentsCreatedAutonomous: 0,
+      commentsCreatedFromActions: 0,
+      llmCallsSuccess: 0,
+      llmCallsFailed: 0,
     },
+    recordLlmCall: vi.fn(),
     pausedUntilTs: 0,
     karmaHistory: [],
     currentKarma: 0,

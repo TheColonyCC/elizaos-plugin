@@ -35,6 +35,8 @@ import {
 } from "@elizaos/core";
 import type { ColonyService } from "./colony.service.js";
 import { cleanGeneratedPost } from "./post-client.js";
+import { validateGeneratedOutput } from "./output-validator.js";
+import { isOllamaReachable } from "../utils/readiness.js";
 import { scorePost } from "./post-scorer.js";
 import { emitEvent } from "../utils/emitEvent.js";
 import { DraftQueue } from "./draft-queue.js";
@@ -204,6 +206,14 @@ export class ColonyEngagementClient {
       return;
     }
 
+    // v0.16.0: skip when Ollama is down. See post-client tick for rationale.
+    if (!(await isOllamaReachable(this.runtime))) {
+      logger.debug(
+        "COLONY_ENGAGEMENT_CLIENT: skipping tick — Ollama endpoint is unreachable (probe cached ≤30s)",
+      );
+      return;
+    }
+
     // v0.15.0: check operator-supplied watch list for posts with new
     // comments before the normal round-robin. If we find one, engage
     // with that instead — this is the targeted-attention path from
@@ -302,21 +312,40 @@ export class ColonyEngagementClient {
           maxTokens: this.config.maxTokens,
         }),
       ).trim();
+      this.service.recordLlmCall?.("success");
     } catch (err) {
       logger.warn(
         `COLONY_ENGAGEMENT_CLIENT: generation failed for post ${candidate.id}: ${String(err)}`,
       );
+      this.service.recordLlmCall?.("failure");
       return;
     }
 
-    const rawContent = cleanGeneratedPost(generated);
-    if (!rawContent) {
+    const cleanedRaw = cleanGeneratedPost(generated);
+    if (!cleanedRaw) {
       logger.debug(
         `COLONY_ENGAGEMENT_CLIENT: SKIP on post ${candidate.id} in c/${colony}`,
       );
       await this.markSeen(candidate.id);
       return;
     }
+
+    // v0.16.0: reject model-error output + strip chat-template artifacts
+    // before anything downstream sees it. Mark-seen so we don't re-tick
+    // the same candidate immediately.
+    const validated = validateGeneratedOutput(cleanedRaw);
+    if (!validated.ok) {
+      if (validated.reason === "model_error") {
+        logger.warn(
+          `COLONY_ENGAGEMENT_CLIENT: dropping model-error output on post ${candidate.id}: ${cleanedRaw.slice(0, 120)}`,
+        );
+        this.service.incrementStat?.("selfCheckRejections");
+        this.service.recordLlmCall?.("failure");
+      }
+      await this.markSeen(candidate.id);
+      return;
+    }
+    const rawContent = validated.content;
 
     const { parentCommentId, cleanedBody } = this.extractReplyTarget(
       rawContent,
@@ -788,15 +817,31 @@ export class ColonyEngagementClient {
           maxTokens: this.config.maxTokens,
         }),
       ).trim();
+      this.service.recordLlmCall?.("success");
     } catch (err) {
       logger.warn(
         `COLONY_ENGAGEMENT_CLIENT: watched-engagement generation failed for ${postId}: ${String(err)}`,
       );
+      this.service.recordLlmCall?.("failure");
       return;
     }
 
-    const rawContent = cleanGeneratedPost(generated);
-    if (!rawContent) return;
+    const cleanedRaw = cleanGeneratedPost(generated);
+    if (!cleanedRaw) return;
+
+    // v0.16.0: model-error + LLM-artifact gate before anything downstream.
+    const validated = validateGeneratedOutput(cleanedRaw);
+    if (!validated.ok) {
+      if (validated.reason === "model_error") {
+        logger.warn(
+          `COLONY_ENGAGEMENT_CLIENT: dropping model-error output on watched post ${postId}: ${cleanedRaw.slice(0, 120)}`,
+        );
+        this.service.incrementStat?.("selfCheckRejections");
+        this.service.recordLlmCall?.("failure");
+      }
+      return;
+    }
+    const rawContent = validated.content;
 
     const { parentCommentId, cleanedBody } = this.extractReplyTarget(
       rawContent,

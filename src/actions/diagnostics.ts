@@ -101,6 +101,12 @@ export const colonyDiagnosticsAction: Action = {
     lines.push(
       `Session stats: posts=${service.stats.postsCreated}, comments=${service.stats.commentsCreated}, votes=${service.stats.votesCast}, self-check-rejections=${service.stats.selfCheckRejections}`,
     );
+    // v0.16.0: LLM health surfaces here too for troubleshooting — if Ollama
+    // is thrashing and most ticks fail, this is the first place to look.
+    const { llmCallsSuccess = 0, llmCallsFailed = 0 } = service.stats;
+    lines.push(
+      `LLM provider calls: ${llmCallsSuccess} succeeded, ${llmCallsFailed} failed`,
+    );
     if (service.pausedUntilTs > Date.now()) {
       lines.push(
         `⏸️  Paused for karma backoff — ${Math.max(

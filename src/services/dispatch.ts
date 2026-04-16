@@ -23,6 +23,7 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "./colony.service.js";
+import { validateGeneratedOutput } from "./output-validator.js";
 
 /**
  * Produces a stable runtime-scoped UUID from a base string by delegating to
@@ -194,8 +195,24 @@ export async function dispatchPostMention(
   const postId = params.postId;
   const parentCommentId = params.parentCommentId;
   const callback: HandlerCallback = async (response) => {
-    const replyText = String(response?.text ?? "").trim();
-    if (!replyText) return [];
+    const rawReply = String(response?.text ?? "").trim();
+    if (!rawReply) return [];
+
+    // v0.16.0: gate reactive-reply outputs the same way the autonomy
+    // loops gate their generations. When Ollama hiccups, the core
+    // plugin can return an error string as `response.text`; without
+    // this check, that string would get posted as a comment.
+    const validated = validateGeneratedOutput(rawReply);
+    if (!validated.ok) {
+      if (validated.reason === "model_error") {
+        logger.warn(
+          `COLONY_DISPATCH: dropping model-error reply on post ${postId}: ${rawReply.slice(0, 120)}`,
+        );
+        service.incrementStat?.("selfCheckRejections");
+      }
+      return [];
+    }
+    const replyText = validated.content;
     try {
       const comment = (await service.client.createComment(
         postId,
@@ -323,8 +340,22 @@ export async function dispatchDirectMessage(
 
   const senderUsername = params.senderUsername;
   const callback: HandlerCallback = async (response) => {
-    const replyText = String(response?.text ?? "").trim();
-    if (!replyText) return [];
+    const rawReply = String(response?.text ?? "").trim();
+    if (!rawReply) return [];
+    // v0.16.0: gate DM reply outputs against model-error leakage —
+    // sending "Error generating text. Please try again later." as a
+    // DM is worse than sending it as a public comment.
+    const validated = validateGeneratedOutput(rawReply);
+    if (!validated.ok) {
+      if (validated.reason === "model_error") {
+        logger.warn(
+          `COLONY_DISPATCH: dropping model-error DM reply to @${senderUsername}: ${rawReply.slice(0, 120)}`,
+        );
+        service.incrementStat?.("selfCheckRejections");
+      }
+      return [];
+    }
+    const replyText = validated.content;
     try {
       const sent = (await (service.client as unknown as {
         sendMessage: (u: string, b: string) => Promise<{ id?: string }>;

@@ -86,6 +86,65 @@ export async function checkOllamaReadiness(
 }
 
 /**
+ * v0.16.0: fast per-tick reachability probe for the Ollama endpoint. Used
+ * by the autonomy loops as a pre-tick gate — if the provider is down, the
+ * tick is skipped entirely instead of burning a failed `useModel` call
+ * that would emit a model-error string the rest of the pipeline has to
+ * catch downstream. Cheaper than the full readiness check: only probes
+ * `/api/tags` with a 1-second timeout; doesn't enumerate model names.
+ *
+ * Results are cached per-runtime with a short TTL (default 30s) so every
+ * tick doesn't hammer the probe. A single failure flips the cache to
+ * `unreachable` for the TTL; the next probe after the TTL refreshes.
+ *
+ * Returns `true` when the probe is skipped (no `OLLAMA_API_ENDPOINT`) —
+ * the caller treats that as "provider is fine, proceed." This means
+ * cloud providers (which set no OLLAMA_* env) always pass the gate;
+ * the probe is Ollama-specific by design.
+ */
+type OllamaReachabilityCache = { until: number; reachable: boolean };
+const OLLAMA_REACHABILITY_CACHE = new WeakMap<object, OllamaReachabilityCache>();
+const OLLAMA_PROBE_TTL_MS = 30_000;
+const OLLAMA_PROBE_TIMEOUT_MS = 1_000;
+
+export async function isOllamaReachable(
+  runtime: IAgentRuntime,
+  ttlMs: number = OLLAMA_PROBE_TTL_MS,
+): Promise<boolean> {
+  const endpoint = getSetting(runtime, "OLLAMA_API_ENDPOINT");
+  if (!endpoint) return true;
+
+  const cached = OLLAMA_REACHABILITY_CACHE.get(runtime as unknown as object);
+  const now = Date.now();
+  if (cached && cached.until > now) return cached.reachable;
+
+  const tagsUrl = endpoint.replace(/\/+$/, "") + "/tags";
+  let reachable = false;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), OLLAMA_PROBE_TIMEOUT_MS);
+    try {
+      const response = await fetch(tagsUrl, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        signal: ctrl.signal,
+      });
+      reachable = response.ok;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    reachable = false;
+  }
+
+  OLLAMA_REACHABILITY_CACHE.set(runtime as unknown as object, {
+    until: now + ttlMs,
+    reachable,
+  });
+  return reachable;
+}
+
+/**
  * Validate the runtime character's structure for fields that materially
  * affect post quality. Warnings only — missing fields don't block boot.
  *

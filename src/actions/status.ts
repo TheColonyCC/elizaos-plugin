@@ -98,6 +98,18 @@ export const colonyStatusAction: Action = {
       `Active autonomy loops: ${clients.length ? clients.join(", ") : "none"}.`,
     );
 
+    // v0.16.0: LLM provider health. Only show when at least one call
+    // has been recorded — fresh agents shouldn't see a noisy "0/0" line.
+    const { llmCallsSuccess = 0, llmCallsFailed = 0 } = stats;
+    if (llmCallsSuccess + llmCallsFailed > 0) {
+      const total = llmCallsSuccess + llmCallsFailed;
+      const pct = Math.round((llmCallsSuccess / total) * 100);
+      const warn = llmCallsFailed > 0 && pct < 90 ? " ⚠️" : "";
+      lines.push(
+        `LLM provider health${warn}: ${llmCallsSuccess}/${total} successful (${pct}%), ${llmCallsFailed} failed.`,
+      );
+    }
+
     const text = lines.join("\n");
     logger.info(`COLONY_STATUS: ${handle} karma=${karma} used=${used}/${dailyLimit}`);
     callback?.({ text, action: "COLONY_STATUS" });

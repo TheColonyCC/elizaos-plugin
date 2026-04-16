@@ -25,11 +25,14 @@ import {
   type IAgentRuntime,
   logger,
 } from "@elizaos/core";
+import type { CreatePostOptions } from "@thecolony/sdk";
 import type { ColonyService } from "./colony.service.js";
 import { scorePost } from "./post-scorer.js";
+import { validateGeneratedOutput } from "./output-validator.js";
 import { emitEvent } from "../utils/emitEvent.js";
 import { RetryQueue } from "./retry-queue.js";
 import { DraftQueue } from "./draft-queue.js";
+import { isOllamaReachable } from "../utils/readiness.js";
 
 const CACHE_KEY_PREFIX = "colony/post-client/recent";
 const DAILY_LEDGER_PREFIX = "colony/post-client/daily";
@@ -207,6 +210,17 @@ export class ColonyPostClient {
       return;
     }
 
+    // v0.16.0: skip the tick entirely when the configured Ollama endpoint
+    // isn't reachable. The alternative — firing `useModel` anyway — wastes
+    // compute, produces an error string the rest of the pipeline has to
+    // catch, and spams the logs. Cheap probe with 30s TTL cache.
+    if (!(await isOllamaReachable(this.runtime))) {
+      logger.debug(
+        "COLONY_POST_CLIENT: skipping tick — Ollama endpoint is unreachable (probe cached ≤30s)",
+      );
+      return;
+    }
+
     // Drain any pending retries before attempting a new generation.
     // If a queued retry succeeds, we still proceed with the normal tick
     // (we don't want a queue backlog to starve fresh content).
@@ -217,7 +231,7 @@ export class ColonyPostClient {
           body: string;
           options?: Record<string, unknown>;
         };
-        const createOpts: Parameters<typeof this.service.client.createPost>[2] = {
+        const createOpts: CreatePostOptions = {
           colony: this.config.colony,
           ...(options as object),
         };
@@ -255,18 +269,41 @@ export class ColonyPostClient {
           maxTokens: this.config.maxTokens,
         }),
       ).trim();
+      this.service.recordLlmCall?.("success");
     } catch (err) {
       logger.warn(`COLONY_POST_CLIENT: generation failed: ${String(err)}`);
+      this.service.recordLlmCall?.("failure");
       return;
     }
 
-    let content = cleanGeneratedPost(generated);
-    if (!content) {
+    const cleanedRaw = cleanGeneratedPost(generated);
+    if (!cleanedRaw) {
       logger.debug(
         "COLONY_POST_CLIENT: generation returned empty or SKIP — not posting this tick",
       );
       return;
     }
+
+    // v0.16.0: strip LLM artifacts + reject model-error strings before they
+    // reach createPost. See src/services/output-validator.ts for rationale.
+    const validated = validateGeneratedOutput(cleanedRaw);
+    if (!validated.ok) {
+      if (validated.reason === "model_error") {
+        logger.warn(
+          `COLONY_POST_CLIENT: dropping model-error output (looks like a provider failure, not real content): ${cleanedRaw.slice(0, 120)}`,
+        );
+        this.service.incrementStat?.("selfCheckRejections");
+        // The initial useModel technically returned, but the output is a
+        // provider-error payload — count as a failure for health stats.
+        this.service.recordLlmCall?.("failure");
+      } else {
+        logger.debug(
+          "COLONY_POST_CLIENT: generation was empty after LLM-artifact stripping",
+        );
+      }
+      return;
+    }
+    let content = validated.content;
 
     if (await this.isDuplicate(content)) {
       logger.debug("COLONY_POST_CLIENT: generated content duplicates recent posts, skipping");
@@ -314,8 +351,15 @@ export class ColonyPostClient {
               maxTokens: this.config.maxTokens,
             }),
           ).trim();
-          const retryContent = cleanGeneratedPost(retryGenerated);
-          if (retryContent && !(await this.isDuplicate(retryContent))) {
+          const retryCleaned = cleanGeneratedPost(retryGenerated);
+          const retryValidated = retryCleaned
+            ? validateGeneratedOutput(retryCleaned)
+            : null;
+          if (
+            retryValidated?.ok &&
+            !(await this.isDuplicate(retryValidated.content))
+          ) {
+            const retryContent = retryValidated.content;
             const split = splitTitleBody(retryContent);
             title = split.title;
             body = split.body;
@@ -381,7 +425,7 @@ export class ColonyPostClient {
     }
 
     try {
-      const createOpts: Parameters<typeof this.service.client.createPost>[2] = {
+      const createOpts: CreatePostOptions = {
         colony: this.config.colony,
       };
       if (effectivePostType) {
