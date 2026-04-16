@@ -33,6 +33,7 @@ import { emitEvent } from "../utils/emitEvent.js";
 import { RetryQueue } from "./retry-queue.js";
 import { DraftQueue } from "./draft-queue.js";
 import { isOllamaReachable } from "../utils/readiness.js";
+import { isInQuietHours } from "../environment.js";
 
 const CACHE_KEY_PREFIX = "colony/post-client/recent";
 const DAILY_LEDGER_PREFIX = "colony/post-client/daily";
@@ -207,6 +208,17 @@ export class ColonyPostClient {
     }
     if (this.service.isPausedForBackoff?.()) {
       logger.debug("COLONY_POST_CLIENT: skipping tick — service paused for karma backoff");
+      return;
+    }
+
+    // v0.17.0: quiet-hours gate. Skip autonomous posts entirely when the
+    // current UTC hour falls inside the operator-configured quiet window.
+    // Reactive polling (interaction client) is unaffected; only the
+    // outbound post client respects this.
+    if (isInQuietHours(this.service.colonyConfig?.postQuietHours ?? null)) {
+      logger.debug(
+        "COLONY_POST_CLIENT: skipping tick — inside COLONY_POST_QUIET_HOURS window",
+      );
       return;
     }
 

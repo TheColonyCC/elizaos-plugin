@@ -76,16 +76,33 @@ export const colonyStatusAction: Action = {
     if (service.isPausedForBackoff?.()) {
       const remainingMs = service.pausedUntilTs - Date.now();
       lines.push(
-        `⏸️  Paused for karma backoff — resuming in ${Math.max(1, Math.round(remainingMs / 60_000))} min.`,
+        `⏸️  Paused — resuming in ${Math.max(1, Math.round(remainingMs / 60_000))} min.`,
       );
     } else if (service.karmaHistory && service.karmaHistory.length > 1) {
-      const max = Math.max(...service.karmaHistory.map((h) => h.karma));
-      const min = Math.min(...service.karmaHistory.map((h) => h.karma));
+      // v0.17.0: richer karma trend — direction arrow + session-delta.
+      const history = service.karmaHistory;
+      const first = history[0]!.karma;
+      const last = history[history.length - 1]!.karma;
+      const max = Math.max(...history.map((h) => h.karma));
+      const min = Math.min(...history.map((h) => h.karma));
+      const delta = last - first;
+      const arrow = delta > 0 ? "↗" : delta < 0 ? "↘" : "→";
+      const deltaStr =
+        delta === 0
+          ? "flat"
+          : delta > 0
+            ? `up ${delta}`
+            : `down ${Math.abs(delta)}`;
+      const windowH = Math.round(
+        service.colonyConfig.karmaBackoffWindowMs / 3600_000,
+      );
       if (max > min) {
         lines.push(
-          `Karma range in last ${Math.round(
-            service.colonyConfig.karmaBackoffWindowMs / 3600_000,
-          )}h: ${min}…${max} (backoff threshold ≥ ${service.colonyConfig.karmaBackoffDrop} drop).`,
+          `Karma trend ${arrow} ${deltaStr} in last ${windowH}h (range ${min}…${max}; backoff threshold ≥ ${service.colonyConfig.karmaBackoffDrop} drop).`,
+        );
+      } else {
+        lines.push(
+          `Karma trend ${arrow} ${deltaStr} in last ${windowH}h (held at ${last}).`,
         );
       }
     }

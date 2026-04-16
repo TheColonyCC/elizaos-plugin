@@ -183,10 +183,12 @@ describe("colonyStatusAction", () => {
         cb,
       );
       const text = (cb.mock.calls[0]![0] as { text: string }).text;
-      expect(text).toContain("Paused for karma backoff");
+      // v0.17.0: pause line consolidated to "Paused — resuming…" (the
+      // pause may now come from karma OR llm-health backoff).
+      expect(text).toContain("Paused — resuming");
     });
 
-    it("reports karma range when history spans values", async () => {
+    it("reports karma trend with range when history spans values (v0.17.0)", async () => {
       service.karmaHistory = [
         { ts: Date.now() - 60_000, karma: 40 },
         { ts: Date.now(), karma: 42 },
@@ -200,10 +202,10 @@ describe("colonyStatusAction", () => {
         cb,
       );
       const text = (cb.mock.calls[0]![0] as { text: string }).text;
-      expect(text).toMatch(/Karma range.*40…42/);
+      expect(text).toMatch(/Karma trend ↗ up 2.*range 40…42/);
     });
 
-    it("skips karma range when max equals min", async () => {
+    it("reports flat karma trend when max equals min (v0.17.0)", async () => {
       service.karmaHistory = [
         { ts: Date.now() - 60_000, karma: 42 },
         { ts: Date.now(), karma: 42 },
@@ -217,7 +219,9 @@ describe("colonyStatusAction", () => {
         cb,
       );
       const text = (cb.mock.calls[0]![0] as { text: string }).text;
-      expect(text).not.toContain("Karma range");
+      // No range line, but the new flat-trend line is present
+      expect(text).toMatch(/Karma trend → flat.*held at 42/);
+      expect(text).not.toContain("range ");
     });
 
     it("lists active autonomy loops", async () => {

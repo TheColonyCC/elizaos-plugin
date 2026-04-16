@@ -37,6 +37,7 @@ import type { ColonyService } from "./colony.service.js";
 import { cleanGeneratedPost } from "./post-client.js";
 import { validateGeneratedOutput } from "./output-validator.js";
 import { isOllamaReachable } from "../utils/readiness.js";
+import { isInQuietHours } from "../environment.js";
 import { scorePost } from "./post-scorer.js";
 import { emitEvent } from "../utils/emitEvent.js";
 import { DraftQueue } from "./draft-queue.js";
@@ -203,6 +204,14 @@ export class ColonyEngagementClient {
     }
     if (this.service.isPausedForBackoff?.()) {
       logger.debug("COLONY_ENGAGEMENT_CLIENT: skipping tick — service paused for karma backoff");
+      return;
+    }
+
+    // v0.17.0: quiet-hours gate for the engagement client.
+    if (isInQuietHours(this.service.colonyConfig?.engageQuietHours ?? null)) {
+      logger.debug(
+        "COLONY_ENGAGEMENT_CLIENT: skipping tick — inside COLONY_ENGAGE_QUIET_HOURS window",
+      );
       return;
     }
 
@@ -650,6 +659,19 @@ export class ColonyEngagementClient {
     emoji: ReactionEmoji,
     colony: string,
   ): Promise<void> {
+    // v0.17.0: per-author reaction cooldown. If we've reacted ≥N times to
+    // this author in the last window, skip (but still mark-seen, so we
+    // don't re-tick the same candidate every cycle). Avoids sycophancy
+    // where the agent reacts to every post by the same high-karma author.
+    const authorUsername = candidate.author?.username;
+    if (authorUsername && (await this.isAuthorReactionCoolingDown(authorUsername))) {
+      logger.debug(
+        `COLONY_ENGAGEMENT_CLIENT: skipping reaction on ${candidate.id} — @${authorUsername} is in per-author cooldown`,
+      );
+      await this.markSeen(candidate.id);
+      return;
+    }
+
     if (this.config.dryRun) {
       logger.info(
         `🌐 COLONY_ENGAGEMENT_CLIENT [DRY RUN] would react ${emoji} on post ${candidate.id} in c/${colony}`,
@@ -661,6 +683,9 @@ export class ColonyEngagementClient {
       await (this.service.client as unknown as {
         reactPost: (postId: string, emoji: string) => Promise<unknown>;
       }).reactPost(candidate.id, emoji);
+      if (authorUsername) {
+        await this.recordAuthorReaction(authorUsername);
+      }
       logger.info(
         `🌐 COLONY_ENGAGEMENT_CLIENT reacted ${emoji} on post ${candidate.id} in c/${colony}`,
       );
@@ -936,5 +961,51 @@ export class ColonyEngagementClient {
     const filtered = current.filter((id) => id !== postId);
     const next = [postId, ...filtered].slice(0, SEEN_RING_SIZE);
     await rt.setCache(this.cacheKey(), next);
+  }
+
+  // v0.17.0: per-author reaction cooldown. Each entry is `{ts: number}`
+  // per author; we keep a rolling list pruned to the window.
+
+  private authorReactionCacheKey(authorUsername: string): string {
+    const self =
+      (this.service as unknown as { username?: string }).username ?? "unknown";
+    return `colony/engagement-client/author-reactions/${self}/${authorUsername}`;
+  }
+
+  private async readAuthorReactionTimestamps(
+    authorUsername: string,
+  ): Promise<number[]> {
+    const rt = this.runtime as unknown as {
+      getCache?: <T>(key: string) => Promise<T | undefined>;
+    };
+    if (typeof rt.getCache !== "function") return [];
+    const cached = await rt.getCache<number[]>(
+      this.authorReactionCacheKey(authorUsername),
+    );
+    return Array.isArray(cached) ? cached : [];
+  }
+
+  private async isAuthorReactionCoolingDown(
+    authorUsername: string,
+  ): Promise<boolean> {
+    const { reactionAuthorLimit: limit, reactionAuthorWindowMs: windowMs } =
+      this.service.colonyConfig;
+    if (limit <= 0 || windowMs <= 0) return false;
+    const timestamps = await this.readAuthorReactionTimestamps(authorUsername);
+    const cutoff = Date.now() - windowMs;
+    const recent = timestamps.filter((ts) => ts > cutoff);
+    return recent.length >= limit;
+  }
+
+  private async recordAuthorReaction(authorUsername: string): Promise<void> {
+    const rt = this.runtime as unknown as {
+      setCache?: <T>(key: string, value: T) => Promise<void>;
+    };
+    if (typeof rt.setCache !== "function") return;
+    const windowMs = this.service.colonyConfig.reactionAuthorWindowMs;
+    const cutoff = Date.now() - windowMs;
+    const current = await this.readAuthorReactionTimestamps(authorUsername);
+    const next = [...current.filter((ts) => ts > cutoff), Date.now()];
+    await rt.setCache(this.authorReactionCacheKey(authorUsername), next);
   }
 }

@@ -95,6 +95,11 @@ export class ColonyService extends Service {
    * v0.16.0: bump the LLM-health counters from generation paths. Separate
    * helper so the call sites stay a one-liner and don't have to remember
    * the exact stat-key names.
+   *
+   * v0.17.0: also record each outcome with a timestamp into a rolling
+   * ring (`llmCallHistory`) so the auto-pause logic can compute a
+   * recent-window failure rate without rescanning anything. The ring is
+   * pruned on each call — no background timer needed.
    */
   recordLlmCall(outcome: "success" | "failure"): void {
     if (outcome === "success") {
@@ -102,7 +107,51 @@ export class ColonyService extends Service {
     } else {
       this.stats = { ...this.stats, llmCallsFailed: this.stats.llmCallsFailed + 1 };
     }
+    const now = Date.now();
+    const windowMs = this.colonyConfig
+      ? this.colonyConfig.llmFailureWindowMs
+      : 10 * 60_000;
+    this.llmCallHistory = [
+      ...this.llmCallHistory.filter((e) => e.ts > now - windowMs),
+      { ts: now, outcome },
+    ];
+    this.maybeTriggerLlmHealthPause(now);
   }
+
+  /**
+   * v0.17.0: if the failure rate in the recent window exceeds the
+   * configured threshold, pause autonomous loops for the cooldown
+   * duration. Shares `pausedUntilTs` with the karma-backoff pause so
+   * operators only have one "am I paused?" check.
+   *
+   * Disabled when `llmFailureThreshold <= 0` (default). Requires at
+   * least 3 samples in the window to avoid flapping on small-sample
+   * noise (e.g. 1 failure → 100% rate).
+   */
+  private maybeTriggerLlmHealthPause(now: number): void {
+    if (!this.colonyConfig) return;
+    const { llmFailureThreshold: threshold, llmFailureCooldownMs: cooldownMs, llmFailureWindowMs: windowMs } = this.colonyConfig;
+    if (threshold <= 0) return;
+    const recent = this.llmCallHistory;
+    if (recent.length < 3) return;
+    const failed = recent.filter((e) => e.outcome === "failure").length;
+    const rate = failed / recent.length;
+    if (rate >= threshold && this.pausedUntilTs <= now) {
+      this.pausedUntilTs = now + cooldownMs;
+      this.recordActivity(
+        "backoff_triggered",
+        undefined,
+        `llm-health: ${failed}/${recent.length} failed (${Math.round(rate * 100)}% ≥ threshold ${Math.round(threshold * 100)}%)`,
+      );
+      logger.warn(
+        `⏸️  COLONY_SERVICE: LLM-health auto-pause — ${failed}/${recent.length} calls failed (${Math.round(rate * 100)}%) in last ${Math.round(
+          windowMs / 60_000,
+        )}min window. Pausing autonomy for ${Math.round(cooldownMs / 60_000)}min.`,
+      );
+    }
+  }
+
+  public llmCallHistory: Array<{ ts: number; outcome: "success" | "failure" }> = [];
 
   public karmaHistory: KarmaSnapshot[] = [];
   public pausedUntilTs = 0;

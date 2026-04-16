@@ -53,6 +53,36 @@ export interface ColonyConfig {
   engageFollowWeight: "off" | "soft" | "strict";
   engagePreferredAuthors: string[];
   postApprovalRequired: boolean;
+  /**
+   * v0.17.0: UTC-hour quiet windows. `null` = disabled. When the current UTC
+   * hour falls inside the window, the corresponding autonomy loop skips its
+   * tick. Reactive polling is unaffected — humans may expect DM replies at
+   * any hour. Parsed from e.g. "23-7" into `{startHour: 23, endHour: 7}`;
+   * the window wraps midnight when `endHour <= startHour`.
+   */
+  postQuietHours: { startHour: number; endHour: number } | null;
+  engageQuietHours: { startHour: number; endHour: number } | null;
+  /**
+   * v0.17.0: LLM-health auto-pause. When the fraction of failed useModel
+   * calls in the last `llmFailureWindowMs` exceeds `llmFailureThreshold`,
+   * the service pauses both autonomy loops for `llmFailureCooldownMs`. The
+   * pause shares `pausedUntilTs` with the karma-backoff pause — operators
+   * have one "is the agent paused?" check.
+   *
+   * Disabled by default (`llmFailureThreshold: 0` → never triggers).
+   */
+  llmFailureThreshold: number;
+  llmFailureWindowMs: number;
+  llmFailureCooldownMs: number;
+  /**
+   * v0.17.0: per-author reaction cooldown. After `reactionAuthorLimit`
+   * reactions to the same author within `reactionAuthorWindowMs`, further
+   * reactions to that author are skipped. Comments (substantive engagement)
+   * are unaffected. Avoids sycophancy patterns where the agent nods at
+   * every post from the same high-karma author.
+   */
+  reactionAuthorLimit: number;
+  reactionAuthorWindowMs: number;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -320,6 +350,51 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
   const postApprovalRequired =
     postApprovalRaw === "true" || postApprovalRaw === "1" || postApprovalRaw === "yes";
 
+  const postQuietHours = parseQuietHours(
+    getSetting(runtime, "COLONY_POST_QUIET_HOURS", "")!,
+  );
+  const engageQuietHours = parseQuietHours(
+    getSetting(runtime, "COLONY_ENGAGE_QUIET_HOURS", "")!,
+  );
+
+  // v0.17.0: LLM-health auto-pause. Default threshold = 0 → disabled.
+  const llmFailureThresholdRaw = Number(
+    getSetting(runtime, "COLONY_LLM_FAILURE_THRESHOLD", "0"),
+  );
+  const llmFailureThreshold = Number.isFinite(llmFailureThresholdRaw)
+    ? Math.max(0, Math.min(1, llmFailureThresholdRaw))
+    : 0;
+  const llmFailureWindowMin = Number(
+    getSetting(runtime, "COLONY_LLM_FAILURE_WINDOW_MIN", "10"),
+  );
+  const llmFailureWindowMs =
+    (Number.isFinite(llmFailureWindowMin) && llmFailureWindowMin > 0
+      ? llmFailureWindowMin
+      : 10) * 60_000;
+  const llmFailureCooldownMin = Number(
+    getSetting(runtime, "COLONY_LLM_FAILURE_COOLDOWN_MIN", "30"),
+  );
+  const llmFailureCooldownMs =
+    (Number.isFinite(llmFailureCooldownMin) && llmFailureCooldownMin > 0
+      ? llmFailureCooldownMin
+      : 30) * 60_000;
+
+  // v0.17.0: per-author reaction cooldown. Default window 2h, limit 3 —
+  // "3 reactions to the same agent in 2h is fine; a 4th feels sycophantic."
+  const reactionAuthorLimitRaw = Number(
+    getSetting(runtime, "COLONY_REACTION_AUTHOR_LIMIT", "3"),
+  );
+  const reactionAuthorLimit = Number.isFinite(reactionAuthorLimitRaw)
+    ? Math.max(1, Math.floor(reactionAuthorLimitRaw))
+    : 3;
+  const reactionAuthorWindowHours = Number(
+    getSetting(runtime, "COLONY_REACTION_AUTHOR_WINDOW_HOURS", "2"),
+  );
+  const reactionAuthorWindowMs =
+    (Number.isFinite(reactionAuthorWindowHours) && reactionAuthorWindowHours > 0
+      ? reactionAuthorWindowHours
+      : 2) * 3600_000;
+
   return {
     apiKey,
     defaultColony,
@@ -372,5 +447,61 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     engageFollowWeight,
     engagePreferredAuthors,
     postApprovalRequired,
+    postQuietHours,
+    engageQuietHours,
+    llmFailureThreshold,
+    llmFailureWindowMs,
+    llmFailureCooldownMs,
+    reactionAuthorLimit,
+    reactionAuthorWindowMs,
   };
+}
+
+/**
+ * Parse a quiet-hours spec like `"23-7"` or `"0-6"` into a UTC-hour window.
+ * Returns `null` for empty input or anything malformed — the caller treats
+ * null as "no quiet window, all hours are OK to post."
+ *
+ * Accepted formats:
+ *   - `""` / whitespace → null (disabled)
+ *   - `"23-7"` → `{startHour: 23, endHour: 7}` (wraps midnight)
+ *   - `"0-6"` → `{startHour: 0, endHour: 6}` (simple overnight)
+ *   - `"9-17"` → `{startHour: 9, endHour: 17}` (daytime, weird but supported)
+ *
+ * Both ends inclusive of the start hour, exclusive of the end hour. So
+ * "23-7" is quiet at 23:00, 00:00, ..., 06:00, and NOT quiet at 07:00.
+ */
+export function parseQuietHours(
+  raw: string,
+): { startHour: number; endHour: number } | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/^(\d{1,2})\s*-\s*(\d{1,2})$/);
+  if (!match) return null;
+  const startHour = Number(match[1]);
+  const endHour = Number(match[2]);
+  if (!Number.isFinite(startHour) || !Number.isFinite(endHour)) return null;
+  if (startHour < 0 || startHour > 23) return null;
+  if (endHour < 0 || endHour > 23) return null;
+  if (startHour === endHour) return null; // empty window == disabled
+  return { startHour, endHour };
+}
+
+/**
+ * True when the given UTC hour is inside the (possibly midnight-wrapping)
+ * quiet window.
+ */
+export function isInQuietHours(
+  window: { startHour: number; endHour: number } | null,
+  now: Date = new Date(),
+): boolean {
+  if (!window) return false;
+  const hour = now.getUTCHours();
+  const { startHour, endHour } = window;
+  if (startHour < endHour) {
+    // Non-wrapping: e.g. 9-17 → quiet during the day
+    return hour >= startHour && hour < endHour;
+  }
+  // Wrapping: e.g. 23-7 → quiet from 23:00 to 07:00 (UTC)
+  return hour >= startHour || hour < endHour;
 }

@@ -101,6 +101,13 @@ export interface FakeService {
     engageFollowWeight?: "off" | "soft" | "strict";
     engagePreferredAuthors?: string[];
     postApprovalRequired?: boolean;
+    postQuietHours?: { startHour: number; endHour: number } | null;
+    engageQuietHours?: { startHour: number; endHour: number } | null;
+    llmFailureThreshold?: number;
+    llmFailureWindowMs?: number;
+    llmFailureCooldownMs?: number;
+    reactionAuthorLimit?: number;
+    reactionAuthorWindowMs?: number;
   };
   draftQueue?: unknown;
   cooldown?: ReturnType<typeof vi.fn>;
@@ -194,6 +201,13 @@ export function fakeService(
       engageFollowWeight: "off" as "off" | "soft" | "strict",
       engagePreferredAuthors: [] as string[],
       postApprovalRequired: false,
+      postQuietHours: null as { startHour: number; endHour: number } | null,
+      engageQuietHours: null as { startHour: number; endHour: number } | null,
+      llmFailureThreshold: 0,
+      llmFailureWindowMs: 10 * 60_000,
+      llmFailureCooldownMs: 30 * 60_000,
+      reactionAuthorLimit: 3,
+      reactionAuthorWindowMs: 2 * 3600_000,
       ...configOverrides,
     },
     cooldown: vi.fn((ms: number) => Date.now() + ms),

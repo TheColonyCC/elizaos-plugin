@@ -76,6 +76,13 @@ describe("loadColonyConfig", () => {
       engageFollowWeight: "off",
       engagePreferredAuthors: [],
       postApprovalRequired: false,
+      postQuietHours: null,
+      engageQuietHours: null,
+      llmFailureThreshold: 0,
+      llmFailureWindowMs: 10 * 60_000,
+      llmFailureCooldownMs: 30 * 60_000,
+      reactionAuthorLimit: 3,
+      reactionAuthorWindowMs: 2 * 3600_000,
     });
   });
 
