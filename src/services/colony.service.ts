@@ -6,11 +6,24 @@ import { ColonyPostClient } from "./post-client.js";
 import { ColonyEngagementClient } from "./engagement-client.js";
 import { checkOllamaReadiness, validateCharacter } from "../utils/readiness.js";
 
+export interface ColonyServiceStats {
+  postsCreated: number;
+  commentsCreated: number;
+  votesCast: number;
+  selfCheckRejections: number;
+  startedAt: number;
+}
+
+export interface KarmaSnapshot {
+  ts: number;
+  karma: number;
+}
+
 export class ColonyService extends Service {
   static serviceType = "colony";
 
   capabilityDescription =
-    "The agent can post, comment, vote, DM, react, follow, read the feed, respond to mentions, autonomously post, and proactively join threads on The Colony (thecolony.cc), an AI-agent-only social network.";
+    "The agent can post, comment, vote, DM, react, follow, read the feed, respond to mentions, autonomously post, proactively join threads, curate, and self-check on The Colony (thecolony.cc), an AI-agent-only social network.";
 
   public client!: ColonyClient;
   public colonyConfig!: ColonyConfig;
@@ -18,9 +31,99 @@ export class ColonyService extends Service {
   public postClient: ColonyPostClient | null = null;
   public engagementClient: ColonyEngagementClient | null = null;
   public username: string | undefined;
+  public currentKarma: number | undefined;
+  public currentTrust: string | undefined;
+
+  public stats: ColonyServiceStats = {
+    postsCreated: 0,
+    commentsCreated: 0,
+    votesCast: 0,
+    selfCheckRejections: 0,
+    startedAt: Date.now(),
+  };
+
+  public karmaHistory: KarmaSnapshot[] = [];
+  public pausedUntilTs = 0;
 
   constructor(runtime?: IAgentRuntime) {
     super(runtime);
+  }
+
+  /**
+   * Refresh the cached karma from the API. Prunes the in-memory history to
+   * the configured window and may set `pausedUntilTs` if the latest karma
+   * has dropped more than `karmaBackoffDrop` below the window max.
+   * Returns the latest karma, or null if the fetch failed.
+   */
+  async refreshKarma(): Promise<number | null> {
+    try {
+      const me = (await this.client.getMe()) as {
+        karma?: number;
+        trust_level?: { name?: string };
+      };
+      const karma = me.karma ?? 0;
+      const now = Date.now();
+      this.currentKarma = karma;
+      this.currentTrust = me.trust_level?.name;
+      this.karmaHistory = [
+        ...this.karmaHistory.filter(
+          (h) => h.ts > now - this.colonyConfig.karmaBackoffWindowMs,
+        ),
+        { ts: now, karma },
+      ];
+      this.updateBackoffState(now);
+      return karma;
+    } catch (err) {
+      logger.debug(`COLONY_SERVICE: refreshKarma failed: ${String(err)}`);
+      return null;
+    }
+  }
+
+  private updateBackoffState(now: number): void {
+    if (this.karmaHistory.length < 2) return;
+    const latest = this.karmaHistory[this.karmaHistory.length - 1]!.karma;
+    const max = Math.max(...this.karmaHistory.map((h) => h.karma));
+    const drop = max - latest;
+    if (drop >= this.colonyConfig.karmaBackoffDrop && this.pausedUntilTs <= now) {
+      this.pausedUntilTs = now + this.colonyConfig.karmaBackoffCooldownMs;
+      logger.warn(
+        `⏸️  COLONY_SERVICE: karma dropped ${drop} points in ${Math.round(
+          this.colonyConfig.karmaBackoffWindowMs / 3600_000,
+        )}h window (max=${max}, latest=${latest}) — pausing autonomous posts/engagement for ${Math.round(
+          this.colonyConfig.karmaBackoffCooldownMs / 60_000,
+        )}min`,
+      );
+    }
+  }
+
+  /**
+   * Returns true when the autonomous post / engagement clients should skip
+   * this tick due to karma backoff. Clears the pause state when the cooldown
+   * has elapsed.
+   */
+  isPausedForBackoff(): boolean {
+    const now = Date.now();
+    if (this.pausedUntilTs && now >= this.pausedUntilTs) {
+      this.pausedUntilTs = 0;
+      logger.info("▶️  COLONY_SERVICE: karma-backoff pause elapsed, resuming");
+    }
+    return now < this.pausedUntilTs;
+  }
+
+  incrementStat<K extends keyof ColonyServiceStats>(key: K): void {
+    if (key === "startedAt") return;
+    this.stats = { ...this.stats, [key]: (this.stats[key] as number) + 1 };
+  }
+
+  /**
+   * Refresh karma at most once per 15 minutes. Called before each post /
+   * engagement tick so the backoff state stays current without adding extra
+   * API polling on top of the interaction client.
+   */
+  async maybeRefreshKarma(minIntervalMs = 15 * 60 * 1000): Promise<void> {
+    const last = this.karmaHistory[this.karmaHistory.length - 1];
+    if (last && Date.now() - last.ts < minIntervalMs) return;
+    await this.refreshKarma();
   }
 
   static async start(runtime: IAgentRuntime): Promise<ColonyService> {
@@ -36,8 +139,11 @@ export class ColonyService extends Service {
         trust_level?: { name?: string };
       };
       service.username = user.username;
+      service.currentKarma = user.karma ?? 0;
+      service.currentTrust = user.trust_level?.name ?? "Newcomer";
+      service.karmaHistory = [{ ts: Date.now(), karma: service.currentKarma }];
       logger.info(
-        `✅ Colony service connected as @${user.username} (karma: ${user.karma ?? 0}, trust: ${user.trust_level?.name ?? "Newcomer"})`,
+        `✅ Colony service connected as @${user.username} (karma: ${service.currentKarma}, trust: ${service.currentTrust})`,
       );
     } catch (err) {
       logger.error(`🚨 Colony service failed to authenticate: ${String(err)}`);
@@ -68,6 +174,7 @@ export class ColonyService extends Service {
         recentTopicMemory: service.colonyConfig.postRecentTopicMemory,
         dryRun: service.colonyConfig.dryRun,
         selfCheck: service.colonyConfig.selfCheckEnabled,
+        dailyLimit: service.colonyConfig.postDailyLimit,
       });
       await service.postClient.start();
     } else {

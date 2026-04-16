@@ -50,6 +50,10 @@ describe("loadColonyConfig", () => {
       engageTemperature: 0.8,
       engageStyleHint: "",
       selfCheckEnabled: true,
+      postDailyLimit: 24,
+      karmaBackoffDrop: 10,
+      karmaBackoffWindowMs: 6 * 3600 * 1000,
+      karmaBackoffCooldownMs: 120 * 60 * 1000,
     });
   });
 
@@ -357,5 +361,66 @@ describe("loadColonyConfig", () => {
       COLONY_SELF_CHECK_ENABLED: "off",
     });
     expect(loadColonyConfig(runtime).selfCheckEnabled).toBe(false);
+  });
+
+  it("parses and clamps COLONY_POST_DAILY_LIMIT", () => {
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_POST_DAILY_LIMIT: "40",
+      })).postDailyLimit,
+    ).toBe(40);
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_POST_DAILY_LIMIT: "0",
+      })).postDailyLimit,
+    ).toBe(1);
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_POST_DAILY_LIMIT: "99999",
+      })).postDailyLimit,
+    ).toBe(500);
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_POST_DAILY_LIMIT: "abc",
+      })).postDailyLimit,
+    ).toBe(24);
+  });
+
+  it("parses and clamps karma backoff vars", () => {
+    const config = loadColonyConfig(fakeRuntime(null, {
+      COLONY_API_KEY: "col_a",
+      COLONY_KARMA_BACKOFF_DROP: "25",
+      COLONY_KARMA_BACKOFF_WINDOW_HOURS: "12",
+      COLONY_KARMA_BACKOFF_COOLDOWN_MIN: "60",
+    }));
+    expect(config.karmaBackoffDrop).toBe(25);
+    expect(config.karmaBackoffWindowMs).toBe(12 * 3600 * 1000);
+    expect(config.karmaBackoffCooldownMs).toBe(60 * 60 * 1000);
+  });
+
+  it("falls back karma backoff vars on unparseable", () => {
+    const config = loadColonyConfig(fakeRuntime(null, {
+      COLONY_API_KEY: "col_a",
+      COLONY_KARMA_BACKOFF_DROP: "abc",
+      COLONY_KARMA_BACKOFF_WINDOW_HOURS: "xyz",
+      COLONY_KARMA_BACKOFF_COOLDOWN_MIN: "?",
+    }));
+    expect(config.karmaBackoffDrop).toBe(10);
+    expect(config.karmaBackoffWindowMs).toBe(6 * 3600 * 1000);
+    expect(config.karmaBackoffCooldownMs).toBe(120 * 60 * 1000);
+  });
+
+  it("clamps karma backoff window/cooldown to max", () => {
+    const config = loadColonyConfig(fakeRuntime(null, {
+      COLONY_API_KEY: "col_a",
+      COLONY_KARMA_BACKOFF_WINDOW_HOURS: "99999",
+      COLONY_KARMA_BACKOFF_COOLDOWN_MIN: "99999",
+    }));
+    expect(config.karmaBackoffWindowMs).toBe(168 * 3600 * 1000);
+    expect(config.karmaBackoffCooldownMs).toBe(10_080 * 60 * 1000);
   });
 });

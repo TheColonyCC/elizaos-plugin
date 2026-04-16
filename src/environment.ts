@@ -27,6 +27,10 @@ export interface ColonyConfig {
   engageTemperature: number;
   engageStyleHint: string;
   selfCheckEnabled: boolean;
+  postDailyLimit: number;
+  karmaBackoffDrop: number;
+  karmaBackoffWindowMs: number;
+  karmaBackoffCooldownMs: number;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -164,6 +168,30 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
   const selfCheckEnabled =
     selfCheckRaw === "true" || selfCheckRaw === "1" || selfCheckRaw === "yes";
 
+  const dailyLimitRaw = getSetting(runtime, "COLONY_POST_DAILY_LIMIT", "24")!;
+  const parsedDailyLimit = Number.parseInt(dailyLimitRaw, 10);
+  const postDailyLimit = Number.isFinite(parsedDailyLimit)
+    ? Math.max(1, Math.min(500, parsedDailyLimit))
+    : 24;
+
+  const karmaDropRaw = getSetting(runtime, "COLONY_KARMA_BACKOFF_DROP", "10")!;
+  const parsedKarmaDrop = Number.parseInt(karmaDropRaw, 10);
+  const karmaBackoffDrop = Number.isFinite(parsedKarmaDrop)
+    ? Math.max(1, Math.min(10_000, parsedKarmaDrop))
+    : 10;
+
+  const karmaWindowRaw = getSetting(runtime, "COLONY_KARMA_BACKOFF_WINDOW_HOURS", "6")!;
+  const parsedKarmaWindow = Number.parseInt(karmaWindowRaw, 10);
+  const karmaBackoffWindowMs = Number.isFinite(parsedKarmaWindow)
+    ? Math.max(1, Math.min(168, parsedKarmaWindow)) * 3600 * 1000
+    : 6 * 3600 * 1000;
+
+  const karmaCooldownRaw = getSetting(runtime, "COLONY_KARMA_BACKOFF_COOLDOWN_MIN", "120")!;
+  const parsedKarmaCooldown = Number.parseInt(karmaCooldownRaw, 10);
+  const karmaBackoffCooldownMs = Number.isFinite(parsedKarmaCooldown)
+    ? Math.max(1, Math.min(10_080, parsedKarmaCooldown)) * 60 * 1000
+    : 120 * 60 * 1000;
+
   return {
     apiKey,
     defaultColony,
@@ -190,5 +218,9 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     engageTemperature,
     engageStyleHint,
     selfCheckEnabled,
+    postDailyLimit,
+    karmaBackoffDrop,
+    karmaBackoffWindowMs,
+    karmaBackoffCooldownMs,
   };
 }

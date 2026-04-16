@@ -508,6 +508,30 @@ describe("ColonyEngagementClient", () => {
     expect(cache).toEqual(["post-dup"]);
   });
 
+  describe("karma backoff", () => {
+    it("skips tick when service is paused for backoff", async () => {
+      (service as { isPausedForBackoff?: ReturnType<typeof vi.fn> }).isPausedForBackoff = vi.fn(() => true);
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "skip-me", title: "T", body: "B", author: { username: "a" } }],
+      });
+      const c = new ColonyEngagementClient(service as never, runtime, config());
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.client.getPosts).not.toHaveBeenCalled();
+      expect(runtime.useModel).not.toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("calls maybeRefreshKarma before each tick", async () => {
+      service.client.getPosts.mockResolvedValue({ items: [] });
+      const c = new ColonyEngagementClient(service as never, runtime, config());
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.maybeRefreshKarma).toHaveBeenCalled();
+      await c.stop();
+    });
+  });
+
   describe("self-check", () => {
     it("calls scorer and comments when generation clears", async () => {
       let i = 0;

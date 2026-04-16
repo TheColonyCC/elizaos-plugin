@@ -75,7 +75,29 @@ export interface FakeService {
     postRecentTopicMemory?: boolean;
     engageStyleHint?: string;
     selfCheckEnabled?: boolean;
+    postDailyLimit?: number;
+    karmaBackoffDrop?: number;
+    karmaBackoffWindowMs?: number;
+    karmaBackoffCooldownMs?: number;
   };
+  incrementStat?: ReturnType<typeof vi.fn>;
+  refreshKarma?: ReturnType<typeof vi.fn>;
+  maybeRefreshKarma?: ReturnType<typeof vi.fn>;
+  isPausedForBackoff?: ReturnType<typeof vi.fn>;
+  stats?: {
+    postsCreated: number;
+    commentsCreated: number;
+    votesCast: number;
+    selfCheckRejections: number;
+    startedAt: number;
+  };
+  pausedUntilTs?: number;
+  karmaHistory?: Array<{ ts: number; karma: number }>;
+  currentKarma?: number;
+  currentTrust?: string;
+  interactionClient?: unknown;
+  postClient?: unknown;
+  engagementClient?: unknown;
 }
 
 export function fakeService(
@@ -111,8 +133,30 @@ export function fakeService(
       postRecentTopicMemory: true,
       engageStyleHint: "",
       selfCheckEnabled: false,
+      postDailyLimit: 24,
+      karmaBackoffDrop: 10,
+      karmaBackoffWindowMs: 6 * 3600 * 1000,
+      karmaBackoffCooldownMs: 120 * 60 * 1000,
       ...configOverrides,
     },
+    incrementStat: vi.fn(),
+    refreshKarma: vi.fn(async () => null),
+    maybeRefreshKarma: vi.fn(async () => undefined),
+    isPausedForBackoff: vi.fn(() => false),
+    stats: {
+      postsCreated: 0,
+      commentsCreated: 0,
+      votesCast: 0,
+      selfCheckRejections: 0,
+      startedAt: Date.now(),
+    },
+    pausedUntilTs: 0,
+    karmaHistory: [],
+    currentKarma: 0,
+    currentTrust: "Newcomer",
+    interactionClient: null,
+    postClient: null,
+    engagementClient: null,
   };
 }
 

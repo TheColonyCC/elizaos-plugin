@@ -13,6 +13,8 @@ import ColonyPlugin, {
   listColonyAgentsAction,
   curateColonyFeedAction,
   commentOnColonyPostAction,
+  colonyStatusAction,
+  colonyDiagnosticsAction,
   colonyFeedProvider,
 } from "../index.js";
 import { fakeRuntime } from "./helpers.js";
@@ -44,6 +46,8 @@ describe("ColonyPlugin", () => {
       listColonyAgentsAction,
       curateColonyFeedAction,
       commentOnColonyPostAction,
+      colonyStatusAction,
+      colonyDiagnosticsAction,
     ]);
     expect(ColonyPlugin.providers).toContain(colonyFeedProvider);
   });

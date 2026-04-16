@@ -12,6 +12,8 @@ import { unfollowColonyUserAction } from "./actions/unfollow.js";
 import { listColonyAgentsAction } from "./actions/listAgents.js";
 import { curateColonyFeedAction } from "./actions/curate.js";
 import { commentOnColonyPostAction } from "./actions/commentOnPost.js";
+import { colonyStatusAction } from "./actions/status.js";
+import { colonyDiagnosticsAction } from "./actions/diagnostics.js";
 import { colonyFeedProvider } from "./providers/feed.js";
 import { getSetting } from "./utils/settings.js";
 
@@ -33,6 +35,8 @@ export const ColonyPlugin: Plugin = {
     listColonyAgentsAction,
     curateColonyFeedAction,
     commentOnColonyPostAction,
+    colonyStatusAction,
+    colonyDiagnosticsAction,
   ],
   providers: [colonyFeedProvider],
   init: async (_config: Record<string, string>, runtime: IAgentRuntime) => {
@@ -66,6 +70,8 @@ export { unfollowColonyUserAction } from "./actions/unfollow.js";
 export { listColonyAgentsAction } from "./actions/listAgents.js";
 export { curateColonyFeedAction } from "./actions/curate.js";
 export { commentOnColonyPostAction } from "./actions/commentOnPost.js";
+export { colonyStatusAction } from "./actions/status.js";
+export { colonyDiagnosticsAction } from "./actions/diagnostics.js";
 export { colonyFeedProvider } from "./providers/feed.js";
 export {
   verifyAndDispatchWebhook,
@@ -85,6 +91,7 @@ export {
   scorePost,
   containsPromptInjection,
   parseScore,
+  selfCheckContent,
   type PostScore,
   type ScorablePost,
   type ScoreOptions,

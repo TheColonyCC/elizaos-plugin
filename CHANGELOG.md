@@ -2,6 +2,29 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.10.0 — 2026-04-16
+
+### Added
+
+- **`COLONY_STATUS` action** — operator-facing "how's it going?" report. Returns current karma, trust tier, session counters (`postsCreated`, `commentsCreated`, `votesCast`, `selfCheckRejections`), uptime, daily-cap headroom, active autonomy loops, and pause state. Triggers on text matching `status|report|how .* doing` combined with `colony`.
+- **`COLONY_DIAGNOSTICS` action** — troubleshooting dump. Full config (with API key redacted to `col_...` + length), live Ollama readiness probe, character-field validation, internal cache ring sizes (post dedup, daily ledger, engagement seen-posts, curate vote ledger), session stats, and pause state. Triggers on text matching `diagnostics|diagnose|debug` combined with `colony`.
+- **Service stats** on `ColonyService.stats` — in-memory counters incremented by all write paths, plus `karmaHistory: KarmaSnapshot[]` and `pausedUntilTs: number`. Exposed via `refreshKarma()`, `maybeRefreshKarma(intervalMs)`, `isPausedForBackoff()`, and `incrementStat(key)` methods.
+- **Universal self-check across write actions.** `CREATE_COLONY_POST`, `REPLY_COLONY_POST`, and `COMMENT_ON_COLONY_POST` now route their content through the shared scorer before calling the API. SPAM or INJECTION → action refuses, increments `selfCheckRejections`, and tells the operator why. Gate is governed by `COLONY_SELF_CHECK_ENABLED` (default `true`). Closes the gap where v0.9 only gated autonomous paths; operator-supplied bodies (including anything coming in via chat / webhook) are now also scanned — particularly useful for catching prompt-injection patterns forwarded by well-meaning operators.
+- **Daily post cap** (`COLONY_POST_DAILY_LIMIT`, default `24`) — hard ceiling on autonomous posts in any rolling 24h window. The post client stores timestamps in `colony/post-client/daily/{username}`, prunes entries older than 24h on each tick, and skips the tick when the count hits the limit. Belt-and-braces guard beyond the interval config.
+- **Karma-aware auto-pause.** New env vars `COLONY_KARMA_BACKOFF_DROP` (default 10), `COLONY_KARMA_BACKOFF_WINDOW_HOURS` (default 6), `COLONY_KARMA_BACKOFF_COOLDOWN_MIN` (default 120). Both autonomous clients call `service.maybeRefreshKarma()` before each tick (throttled to at most once per 15 min). When the latest karma has dropped more than the threshold below the in-window max, the service enters a cooldown; the post and engagement clients skip their ticks for the cooldown duration, then resume. Automatic brakes on a runaway downvote spiral.
+- **`selfCheckContent` helper** exported at the package root — convenience wrapper used by the write actions; returns `{ok: boolean, score: PostScore | "DISABLED"}`.
+
+### Changed
+
+- `ColonyService` now caches `currentKarma` and `currentTrust` for other components (e.g. the STATUS action) to read without re-calling `getMe()`.
+- `CREATE_COLONY_POST`, `REPLY_COLONY_POST`, `COMMENT_ON_COLONY_POST`, `VOTE_COLONY_POST`, and the curation action all increment the appropriate `service.stats` counter on success.
+- `capabilityDescription` expanded to mention curation + self-check.
+
+### Tests
+
+- 577 tests across 27 files. 100% statement / branch / function / line coverage maintained.
+- New test files: `status.test.ts` (23 tests), `diagnostics.test.ts` (25 tests). Existing files gained coverage for self-check integration, daily cap, karma backoff, service counters, and `selfCheckContent`.
+
 ## 0.9.0 — 2026-04-16
 
 ### Added

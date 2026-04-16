@@ -29,7 +29,9 @@ import type { ColonyService } from "./colony.service.js";
 import { scorePost } from "./post-scorer.js";
 
 const CACHE_KEY_PREFIX = "colony/post-client/recent";
+const DAILY_LEDGER_PREFIX = "colony/post-client/daily";
 const RECENT_POST_RING_SIZE = 10;
+const DAILY_WINDOW_MS = 24 * 3600 * 1000;
 
 export interface ColonyPostClientConfig {
   intervalMinMs: number;
@@ -65,6 +67,12 @@ export interface ColonyPostClientConfig {
    * against degenerate generations leaking onto the network.
    */
   selfCheck?: boolean;
+  /**
+   * Hard ceiling on autonomous posts in any rolling 24h window. When the
+   * count of timestamps in the daily ledger reaches this value, ticks are
+   * skipped until the oldest entry ages out.
+   */
+  dailyLimit?: number;
 }
 
 export class ColonyPostClient {
@@ -125,6 +133,23 @@ export class ColonyPostClient {
   }
 
   private async tick(): Promise<void> {
+    await this.service.maybeRefreshKarma?.();
+    if (this.service.isPausedForBackoff?.()) {
+      logger.debug("COLONY_POST_CLIENT: skipping tick — service paused for karma backoff");
+      return;
+    }
+
+    const dailyLimit = this.config.dailyLimit;
+    if (dailyLimit && dailyLimit > 0) {
+      const recentCount = await this.countPostsInLastDay();
+      if (recentCount >= dailyLimit) {
+        logger.info(
+          `COLONY_POST_CLIENT: daily cap reached (${recentCount}/${dailyLimit}), skipping tick`,
+        );
+        return;
+      }
+    }
+
     const prompt = await this.buildPrompt();
     if (!prompt) return;
 
@@ -163,6 +188,7 @@ export class ColonyPostClient {
         logger.warn(
           `COLONY_POST_CLIENT: self-check rejected generated post as ${score}, skipping tick`,
         );
+        this.service.incrementStat?.("selfCheckRejections");
         return;
       }
     }
@@ -172,6 +198,7 @@ export class ColonyPostClient {
         `📝 COLONY_POST_CLIENT [DRY RUN] would post to c/${this.config.colony}: ${title.slice(0, 80)}... (${body.length} chars)`,
       );
       await this.rememberPost(content);
+      await this.recordDailyTimestamp();
       return;
     }
 
@@ -183,9 +210,48 @@ export class ColonyPostClient {
         `📝 COLONY_POST_CLIENT posted to c/${this.config.colony}: ${post.id ? `id=${post.id}` : "(no id)"}`,
       );
       await this.rememberPost(content);
+      await this.recordDailyTimestamp();
+      this.service.incrementStat?.("postsCreated");
     } catch (err) {
       logger.warn(`COLONY_POST_CLIENT: createPost failed: ${String(err)}`);
     }
+  }
+
+  private dailyLedgerKey(): string {
+    const username =
+      (this.service as unknown as { username?: string }).username ?? "unknown";
+    return `${DAILY_LEDGER_PREFIX}/${username}`;
+  }
+
+  /**
+   * Returns the number of successful-post timestamps in the last 24h,
+   * pruning anything older from the stored ledger.
+   */
+  async countPostsInLastDay(): Promise<number> {
+    const rt = this.runtime as unknown as {
+      getCache?: <T>(key: string) => Promise<T | undefined>;
+      setCache?: <T>(key: string, value: T) => Promise<void>;
+    };
+    if (typeof rt.getCache !== "function") return 0;
+    const cached = (await rt.getCache<number[]>(this.dailyLedgerKey())) ?? [];
+    const cutoff = Date.now() - DAILY_WINDOW_MS;
+    const pruned = cached.filter((ts) => ts > cutoff);
+    if (pruned.length !== cached.length && typeof rt.setCache === "function") {
+      await rt.setCache(this.dailyLedgerKey(), pruned);
+    }
+    return pruned.length;
+  }
+
+  private async recordDailyTimestamp(): Promise<void> {
+    const rt = this.runtime as unknown as {
+      getCache?: <T>(key: string) => Promise<T | undefined>;
+      setCache?: <T>(key: string, value: T) => Promise<void>;
+    };
+    if (typeof rt.setCache !== "function") return;
+    const existing = (await rt.getCache?.<number[]>(this.dailyLedgerKey())) ?? [];
+    const cutoff = Date.now() - DAILY_WINDOW_MS;
+    const next = [...existing.filter((ts) => ts > cutoff), Date.now()];
+    await rt.setCache(this.dailyLedgerKey(), next);
   }
 
   private async buildPrompt(): Promise<string | null> {

@@ -133,3 +133,22 @@ export function parseScore(raw: string): PostScore {
   if (/\bSPAM\b/.test(upper)) return "SPAM";
   return "SKIP";
 }
+
+/**
+ * Score-or-skip helper for write-action paths. Returns true if the content
+ * is safe to publish (SKIP or EXCELLENT), false if the scorer flagged it
+ * SPAM or INJECTION. `selfCheckEnabled` lets callers honor the env flag
+ * without duplicating the gate.
+ */
+export async function selfCheckContent(
+  runtime: IAgentRuntime,
+  post: ScorablePost,
+  selfCheckEnabled: boolean,
+): Promise<{ ok: boolean; score: PostScore | "DISABLED" }> {
+  if (!selfCheckEnabled) return { ok: true, score: "DISABLED" };
+  const score = await scorePost(runtime, post);
+  return {
+    ok: score !== "SPAM" && score !== "INJECTION",
+    score,
+  };
+}

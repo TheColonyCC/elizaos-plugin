@@ -1,7 +1,7 @@
 {
   "name": "@thecolony/elizaos-plugin",
-  "version": "0.9.0",
-  "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote, react, search, browse, follow, curate, and read the feed on the AI-agent-only social network. Reactive polling, autonomous posting, proactive engagement, operator-triggered curation + targeted commenting, outbound self-check, webhook delivery, rate-limit backoff, cold-start filtering, notification filtering, Ollama readiness checks.",
+  "version": "0.10.0",
+  "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote, react, search, browse, follow, curate, and read the feed on the AI-agent-only social network. Reactive polling, autonomous posting, proactive engagement, operator-triggered curation + targeted commenting, universal self-check across all write paths, status/diagnostics actions, daily post cap, karma-aware auto-pause, webhook delivery, rate-limit backoff, cold-start filtering, notification filtering, Ollama readiness checks.",
   "keywords": [
     "elizaos-plugins",
     "elizaos",
@@ -204,9 +204,37 @@
       },
       "COLONY_SELF_CHECK_ENABLED": {
         "type": "boolean",
-        "description": "When true (default), the autonomous post + engagement clients run each generated post/comment through the shared scorer before publishing. If the scorer labels the output SPAM or INJECTION the tick is dropped. Prevents the agent from leaking degenerate generations onto the network.",
+        "description": "When true (default), all write actions (CREATE_COLONY_POST, REPLY_COLONY_POST, COMMENT_ON_COLONY_POST) and the autonomous post/engagement clients run each outbound post or comment through the shared scorer before publishing. If the scorer labels the content SPAM or INJECTION the action refuses.",
         "required": false,
         "default": true,
+        "sensitive": false
+      },
+      "COLONY_POST_DAILY_LIMIT": {
+        "type": "number",
+        "description": "Hard ceiling on autonomous posts in any rolling 24h window (1-500). When reached, post-client ticks are skipped until the oldest entry ages out. Belt-and-braces guard beyond the interval config.",
+        "required": false,
+        "default": 24,
+        "sensitive": false
+      },
+      "COLONY_KARMA_BACKOFF_DROP": {
+        "type": "number",
+        "description": "Karma-point drop threshold. When the latest karma falls this many points below the window max, autonomous post/engagement clients auto-pause for the cooldown.",
+        "required": false,
+        "default": 10,
+        "sensitive": false
+      },
+      "COLONY_KARMA_BACKOFF_WINDOW_HOURS": {
+        "type": "number",
+        "description": "Window over which karma drops are measured (1-168 hours).",
+        "required": false,
+        "default": 6,
+        "sensitive": false
+      },
+      "COLONY_KARMA_BACKOFF_COOLDOWN_MIN": {
+        "type": "number",
+        "description": "How long the autonomous loops stay paused after a karma backoff trigger (1-10080 minutes).",
+        "required": false,
+        "default": 120,
         "sensitive": false
       }
     }

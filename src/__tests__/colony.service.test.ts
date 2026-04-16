@@ -119,4 +119,180 @@ describe("ColonyService", () => {
     expect(typeof s.capabilityDescription).toBe("string");
     expect(s.capabilityDescription.length).toBeGreaterThan(0);
   });
+
+  describe("stats counters", () => {
+    it("incrementStat bumps the named key", async () => {
+      mockGetMe.mockResolvedValue({ username: "t", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      service.incrementStat("postsCreated");
+      service.incrementStat("postsCreated");
+      service.incrementStat("commentsCreated");
+      service.incrementStat("votesCast");
+      service.incrementStat("selfCheckRejections");
+      expect(service.stats.postsCreated).toBe(2);
+      expect(service.stats.commentsCreated).toBe(1);
+      expect(service.stats.votesCast).toBe(1);
+      expect(service.stats.selfCheckRejections).toBe(1);
+    });
+
+    it("incrementStat ignores startedAt", async () => {
+      mockGetMe.mockResolvedValue({ username: "t", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      const before = service.stats.startedAt;
+      service.incrementStat("startedAt");
+      expect(service.stats.startedAt).toBe(before);
+    });
+  });
+
+  describe("karma backoff", () => {
+    it("refreshKarma returns latest karma and updates history", async () => {
+      mockGetMe
+        .mockResolvedValueOnce({ username: "k", karma: 100, trust_level: { name: "Trusted" } })
+        .mockResolvedValueOnce({ username: "k", karma: 95, trust_level: { name: "Trusted" } });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      const karma = await service.refreshKarma();
+      expect(karma).toBe(95);
+      expect(service.currentKarma).toBe(95);
+      expect(service.karmaHistory.length).toBe(2);
+    });
+
+    it("refreshKarma returns null on error without throwing", async () => {
+      mockGetMe
+        .mockResolvedValueOnce({ username: "k", karma: 10 })
+        .mockRejectedValueOnce(new Error("rate limit"));
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      const karma = await service.refreshKarma();
+      expect(karma).toBeNull();
+    });
+
+    it("pauses when karma drops more than threshold in window", async () => {
+      mockGetMe
+        .mockResolvedValueOnce({ username: "k", karma: 50 })
+        .mockResolvedValueOnce({ username: "k", karma: 35 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_KARMA_BACKOFF_DROP: "10",
+        }),
+      );
+      await service.refreshKarma();
+      expect(service.pausedUntilTs).toBeGreaterThan(Date.now());
+      expect(service.isPausedForBackoff()).toBe(true);
+    });
+
+    it("does not pause when the drop is below threshold", async () => {
+      mockGetMe
+        .mockResolvedValueOnce({ username: "k", karma: 50 })
+        .mockResolvedValueOnce({ username: "k", karma: 45 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_KARMA_BACKOFF_DROP: "10",
+        }),
+      );
+      await service.refreshKarma();
+      expect(service.pausedUntilTs).toBe(0);
+      expect(service.isPausedForBackoff()).toBe(false);
+    });
+
+    it("isPausedForBackoff clears pause after cooldown elapses", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      service.pausedUntilTs = Date.now() - 1000;
+      expect(service.isPausedForBackoff()).toBe(false);
+      expect(service.pausedUntilTs).toBe(0);
+    });
+
+    it("does not clear the pause when still in the cooldown", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      const future = Date.now() + 10_000;
+      service.pausedUntilTs = future;
+      expect(service.isPausedForBackoff()).toBe(true);
+      expect(service.pausedUntilTs).toBe(future);
+    });
+
+    it("does not re-enter pause when already paused", async () => {
+      mockGetMe
+        .mockResolvedValueOnce({ username: "k", karma: 100 })
+        .mockResolvedValueOnce({ username: "k", karma: 50 })
+        .mockResolvedValueOnce({ username: "k", karma: 40 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      await service.refreshKarma();
+      const firstPause = service.pausedUntilTs;
+      await service.refreshKarma();
+      // Second refreshKarma should NOT update pausedUntilTs because we're still paused
+      expect(service.pausedUntilTs).toBe(firstPause);
+    });
+
+    it("maybeRefreshKarma throttles to at most once per interval", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 10 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      // First call passes (history has only startup entry)
+      await service.maybeRefreshKarma(60_000);
+      const after1 = service.karmaHistory.length;
+      // Immediate second call is throttled
+      await service.maybeRefreshKarma(60_000);
+      expect(service.karmaHistory.length).toBe(after1);
+    });
+
+    it("maybeRefreshKarma refreshes when last snapshot is stale", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 10 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      // Forge an old timestamp
+      service.karmaHistory = [{ ts: Date.now() - 60 * 60 * 1000, karma: 9 }];
+      await service.maybeRefreshKarma(60_000);
+      expect(service.karmaHistory.length).toBeGreaterThan(1);
+    });
+
+    it("updateBackoffState does nothing with fewer than 2 history entries", async () => {
+      // Set a tiny window so the startup seed gets pruned before the new
+      // snapshot is added — leaving history at length 1 when
+      // updateBackoffState runs.
+      mockGetMe
+        .mockResolvedValueOnce({ username: "k", karma: 10 })
+        .mockResolvedValueOnce({ username: "k", karma: 50 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_KARMA_BACKOFF_WINDOW_HOURS: "1",
+        }),
+      );
+      // Force the startup entry to be ancient so the filter drops it
+      service.karmaHistory = [{ ts: 0, karma: 10 }];
+      await service.refreshKarma();
+      // History has exactly 1 entry (new) → guard trips, no pause
+      expect(service.karmaHistory.length).toBe(1);
+      expect(service.pausedUntilTs).toBe(0);
+    });
+
+    it("refreshKarma defaults karma to 0 when me.karma is missing", async () => {
+      mockGetMe
+        .mockResolvedValueOnce({ username: "k", karma: 5 })
+        .mockResolvedValueOnce({ username: "k" }); // no karma field
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      await service.refreshKarma();
+      expect(service.currentKarma).toBe(0);
+    });
+  });
 });

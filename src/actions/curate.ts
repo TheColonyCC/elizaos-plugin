@@ -202,6 +202,7 @@ async function tryVote(
 ): Promise<boolean> {
   try {
     await service.client.votePost(postId, value);
+    service.incrementStat?.("votesCast");
     return true;
   } catch (err) {
     logger.warn(`CURATE_COLONY_FEED: votePost(${postId}, ${value}) failed: ${String(err)}`);

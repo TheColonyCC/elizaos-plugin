@@ -8,6 +8,7 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
+import { selfCheckContent } from "../services/post-scorer.js";
 
 const REPLY_KEYWORDS = ["reply", "comment", "respond"];
 const REPLY_REGEX = /\b(?:reply|comment|respond)\b/i;
@@ -52,9 +53,27 @@ export const replyColonyAction: Action = {
       return;
     }
 
+    const check = await selfCheckContent(
+      runtime,
+      { body },
+      service.colonyConfig.selfCheckEnabled,
+    );
+    if (!check.ok) {
+      service.incrementStat?.("selfCheckRejections");
+      logger.warn(
+        `REPLY_COLONY_POST: self-check rejected content as ${check.score}`,
+      );
+      callback?.({
+        text: `Refused to reply — self-check flagged the content as ${check.score}.`,
+        action: "REPLY_COLONY_POST",
+      });
+      return;
+    }
+
     try {
       const comment = await service.client.createComment(postId, body, parentId);
       logger.info(`REPLY_COLONY_POST: created comment ${comment.id} on post ${postId}`);
+      service.incrementStat?.("commentsCreated");
       callback?.({
         text: `Replied on https://thecolony.cc/post/${postId}`,
         action: "REPLY_COLONY_POST",

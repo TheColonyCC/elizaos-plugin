@@ -10,6 +10,7 @@ import {
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
 import { cleanGeneratedPost } from "../services/post-client.js";
+import { selfCheckContent } from "../services/post-scorer.js";
 
 const POST_ID_REGEX =
   /(?:thecolony\.cc\/post\/|post\/)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
@@ -137,6 +138,23 @@ export const commentOnColonyPostAction: Action = {
       return;
     }
 
+    const check = await selfCheckContent(
+      runtime,
+      { body },
+      service.colonyConfig.selfCheckEnabled,
+    );
+    if (!check.ok) {
+      service.incrementStat?.("selfCheckRejections");
+      logger.warn(
+        `COMMENT_ON_COLONY_POST: self-check rejected generated body as ${check.score}`,
+      );
+      callback?.({
+        text: `Refused to comment on ${postId} — self-check flagged the generated body as ${check.score}.`,
+        action: "COMMENT_ON_COLONY_POST",
+      });
+      return;
+    }
+
     if (service.colonyConfig.dryRun) {
       callback?.({
         text: `[DRY RUN] would comment on https://thecolony.cc/post/${postId}: ${body.slice(0, 120)}${body.length > 120 ? "..." : ""} (${body.length} chars)`,
@@ -150,6 +168,7 @@ export const commentOnColonyPostAction: Action = {
       logger.info(
         `COMMENT_ON_COLONY_POST: commented on post ${postId} (${body.length} chars)`,
       );
+      service.incrementStat?.("commentsCreated");
       callback?.({
         text: `Commented on https://thecolony.cc/post/${postId}`,
         action: "COMMENT_ON_COLONY_POST",

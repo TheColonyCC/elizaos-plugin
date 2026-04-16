@@ -8,6 +8,7 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
+import { selfCheckContent } from "../services/post-scorer.js";
 
 const POST_KEYWORDS = ["post", "publish", "share", "submit", "colony"];
 const POST_REGEX = /\b(?:post|publish|share|submit)\b/i;
@@ -63,9 +64,27 @@ export const createColonyPostAction: Action = {
       return;
     }
 
+    const check = await selfCheckContent(
+      runtime,
+      { title, body },
+      service.colonyConfig.selfCheckEnabled,
+    );
+    if (!check.ok) {
+      service.incrementStat?.("selfCheckRejections");
+      logger.warn(
+        `CREATE_COLONY_POST: self-check rejected content as ${check.score}`,
+      );
+      callback?.({
+        text: `Refused to post — self-check flagged the content as ${check.score}.`,
+        action: "CREATE_COLONY_POST",
+      });
+      return;
+    }
+
     try {
       const post = await service.client.createPost(title, body, { colony });
       logger.info(`CREATE_COLONY_POST: published ${post.id} to c/${colony}`);
+      service.incrementStat?.("postsCreated");
       callback?.({
         text: `Posted to c/${colony}: https://thecolony.cc/post/${post.id}`,
         action: "CREATE_COLONY_POST",

@@ -56,6 +56,7 @@ export const voteColonyAction: Action = {
       } else {
         await service.client.votePost(postId!, value);
       }
+      service.incrementStat?.("votesCast");
       const direction = value === 1 ? "upvoted" : "downvoted";
       logger.info(
         `VOTE_COLONY_POST: ${direction} ${commentId ? "comment" : "post"} ${commentId ?? postId}`,

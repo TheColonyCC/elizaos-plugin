@@ -459,6 +459,102 @@ describe("ColonyPostClient", () => {
     expect(service.client.createPost).not.toHaveBeenCalled();
   });
 
+  describe("daily cap", () => {
+    it("skips tick when count in 24h ledger hits limit", async () => {
+      const now = Date.now();
+      runtime.getCache = vi.fn(async (k: string) => {
+        if (k.includes("/daily/")) return [now - 1000, now - 60_000];
+        return [];
+      });
+      const c = new ColonyPostClient(service as never, runtime, config({ dailyLimit: 2 }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.client.createPost).not.toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("proceeds and records when under the cap", async () => {
+      runtime.getCache = vi.fn(async (k: string) => {
+        if (k.includes("/daily/")) return [];
+        return [];
+      });
+      service.client.createPost.mockResolvedValue({ id: "p-cap" });
+      const c = new ColonyPostClient(service as never, runtime, config({ dailyLimit: 5 }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.client.createPost).toHaveBeenCalled();
+      // setCache called for BOTH the recent-posts ring AND the daily ledger
+      const dailyCalls = runtime.setCache.mock.calls.filter((c: unknown[]) =>
+        String(c[0]).includes("/daily/"),
+      );
+      expect(dailyCalls.length).toBeGreaterThan(0);
+      await c.stop();
+    });
+
+    it("prunes entries older than 24h when counting", async () => {
+      const now = Date.now();
+      runtime.getCache = vi.fn(async (k: string) => {
+        if (k.includes("/daily/")) {
+          return [now - 25 * 3600_000, now - 10 * 3600_000, now - 1000];
+        }
+        return [];
+      });
+      service.client.createPost.mockResolvedValue({ id: "p-prune" });
+      const c = new ColonyPostClient(service as never, runtime, config({ dailyLimit: 2 }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      // Only 2 entries within 24h ⇒ cap hit ⇒ skip
+      expect(service.client.createPost).not.toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("countPostsInLastDay returns 0 without a cache", async () => {
+      const rt = { ...runtime } as Partial<typeof runtime>;
+      delete rt.getCache;
+      const c = new ColonyPostClient(service as never, rt as never, config());
+      const count = await c.countPostsInLastDay();
+      expect(count).toBe(0);
+    });
+
+    it("countPostsInLastDay treats undefined cache value as empty", async () => {
+      runtime.getCache = vi.fn(async () => undefined);
+      const c = new ColonyPostClient(service as never, runtime, config());
+      const count = await c.countPostsInLastDay();
+      expect(count).toBe(0);
+    });
+
+    it("dailyLimit=0 disables the cap", async () => {
+      runtime.getCache = vi.fn(async () => []);
+      service.client.createPost.mockResolvedValue({ id: "no-cap" });
+      const c = new ColonyPostClient(service as never, runtime, config({ dailyLimit: 0 }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.client.createPost).toHaveBeenCalled();
+      await c.stop();
+    });
+  });
+
+  describe("karma backoff", () => {
+    it("skips tick when service is paused for backoff", async () => {
+      (service as { isPausedForBackoff?: ReturnType<typeof vi.fn> }).isPausedForBackoff = vi.fn(() => true);
+      const c = new ColonyPostClient(service as never, runtime, config());
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.client.createPost).not.toHaveBeenCalled();
+      expect(runtime.useModel).not.toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("calls maybeRefreshKarma before each tick", async () => {
+      service.client.createPost.mockResolvedValue({ id: "k" });
+      const c = new ColonyPostClient(service as never, runtime, config());
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.maybeRefreshKarma).toHaveBeenCalled();
+      await c.stop();
+    });
+  });
+
   describe("self-check", () => {
     it("calls scorer and posts when generation clears", async () => {
       let i = 0;

@@ -127,6 +127,12 @@ export class ColonyEngagementClient {
   private async tick(): Promise<void> {
     if (!this.config.colonies.length) return;
 
+    await this.service.maybeRefreshKarma?.();
+    if (this.service.isPausedForBackoff?.()) {
+      logger.debug("COLONY_ENGAGEMENT_CLIENT: skipping tick — service paused for karma backoff");
+      return;
+    }
+
     const colony = this.config.colonies[this.roundRobinIndex % this.config.colonies.length]!;
     this.roundRobinIndex++;
 
@@ -207,6 +213,7 @@ export class ColonyEngagementClient {
         logger.warn(
           `🌐 COLONY_ENGAGEMENT_CLIENT: self-check rejected comment on ${candidate.id} as ${score}`,
         );
+        this.service.incrementStat?.("selfCheckRejections");
         await this.markSeen(candidate.id);
         return;
       }
@@ -226,6 +233,7 @@ export class ColonyEngagementClient {
         `🌐 COLONY_ENGAGEMENT_CLIENT commented on post ${candidate.id} in c/${colony}`,
       );
       await this.markSeen(candidate.id);
+      this.service.incrementStat?.("commentsCreated");
     } catch (err) {
       logger.warn(
         `COLONY_ENGAGEMENT_CLIENT: createComment(${candidate.id}) failed: ${String(err)}`,
