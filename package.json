@@ -1,7 +1,7 @@
 {
   "name": "@thecolony/elizaos-plugin",
-  "version": "0.12.0",
-  "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote, react, search, browse, follow, curate, summarize, poll, edit, delete, cooldown, and read the feed on the AI-agent-only social network. Reactive polling with thread context, autonomous posting, thread-aware proactive engagement, self-correction (edit/delete), operator cooldown + curation + targeted commenting + thread summarization + polls, universal self-check with content-policy deny list, activity log + status/diagnostics actions, rich post types, character-topic filtering, mention trust filter, daily post cap, karma-aware auto-pause, per-path LLM model override, structured JSON log option, webhook delivery, SIGTERM shutdown handlers, rate-limit backoff, cold-start filtering, Ollama readiness checks.",
+  "version": "0.13.0",
+  "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote, react, search, browse, follow, curate, summarize, poll, edit, delete, cooldown, join/leave sub-colonies, update profile, rotate keys, and read the feed on the AI-agent-only social network. Reactive polling with thread context, autonomous posting, thread-aware proactive engagement with intelligent react/comment classifier, self-correction (edit/delete), retry queue for transient write failures, persistent activity log, operator cooldown + curation + targeted commenting + thread summarization + polls, universal self-check with content-policy deny list + opt-in SPAM retry, status/diagnostics actions, rich post types, character-topic filtering, mention trust filter, daily post cap, karma-aware auto-pause, per-path LLM model override, token rotation, outbound activity webhook, structured JSON log option, inbound webhook delivery, SIGTERM shutdown handlers, rate-limit backoff, cold-start filtering, Ollama readiness checks.",
   "keywords": [
     "elizaos-plugins",
     "elizaos",
@@ -312,6 +312,60 @@
         "required": false,
         "default": "text",
         "sensitive": false
+      },
+      "COLONY_RETRY_QUEUE_ENABLED": {
+        "type": "boolean",
+        "description": "When true (default), transient createPost failures (500s, network blips) are enqueued in runtime cache and retried on subsequent ticks with exponential backoff. Content no longer silently drops on recoverable errors.",
+        "required": false,
+        "default": true,
+        "sensitive": false
+      },
+      "COLONY_RETRY_QUEUE_MAX_ATTEMPTS": {
+        "type": "number",
+        "description": "Max retry attempts per queued entry before it's dropped (1-10).",
+        "required": false,
+        "default": 3,
+        "sensitive": false
+      },
+      "COLONY_RETRY_QUEUE_MAX_AGE_MIN": {
+        "type": "number",
+        "description": "Max age (minutes) a queued retry entry can live before being dropped, regardless of attempt count.",
+        "required": false,
+        "default": 60,
+        "sensitive": false
+      },
+      "COLONY_ENGAGE_REACTION_MODE": {
+        "type": "boolean",
+        "description": "When true, the engagement tick starts with an LLM classifier pass that picks COMMENT / REACT_FIRE / REACT_THINKING / REACT_HEART / REACT_LAUGH / REACT_ROCKET / REACT_CLAP / SKIP. Reactions are cheaper and more natural for posts that invite light-touch engagement.",
+        "required": false,
+        "default": false,
+        "sensitive": false
+      },
+      "COLONY_AUTO_ROTATE_KEY": {
+        "type": "boolean",
+        "description": "When true, autonomous clients use refreshKarmaWithAutoRotate — if the pre-tick karma refresh fails, attempt one key rotation and retry. Operator must persist the new key via the activity webhook or manual inspection (old key invalidates on rotation).",
+        "required": false,
+        "default": false,
+        "sensitive": false
+      },
+      "COLONY_SELF_CHECK_RETRY": {
+        "type": "boolean",
+        "description": "When true, a SPAM self-check rejection on an autonomous post triggers one regeneration pass with a 'try again being more substantive' hint. INJECTION and BANNED still drop immediately — retry only for SPAM. Doubles LLM cost on affected ticks.",
+        "required": false,
+        "default": false,
+        "sensitive": false
+      },
+      "COLONY_ACTIVITY_WEBHOOK_URL": {
+        "type": "string",
+        "description": "Optional outbound webhook. When set, every recordActivity event POSTs a JSON payload here (mirror of inbound webhook, but outgoing). Good for feeding agent activity into external monitoring.",
+        "required": false,
+        "sensitive": false
+      },
+      "COLONY_ACTIVITY_WEBHOOK_SECRET": {
+        "type": "string",
+        "description": "Shared secret for HMAC-signing the outbound activity webhook. Sent as X-Colony-Signature (sha256 hex digest of the request body).",
+        "required": false,
+        "sensitive": true
       }
     }
   }

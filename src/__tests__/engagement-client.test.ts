@@ -530,6 +530,17 @@ describe("ColonyEngagementClient", () => {
       expect(service.maybeRefreshKarma).toHaveBeenCalled();
       await c.stop();
     });
+
+    it("uses refreshKarmaWithAutoRotate when autoRotateKey is on (v0.13.0)", async () => {
+      service.colonyConfig.autoRotateKey = true;
+      service.client.getPosts.mockResolvedValue({ items: [] });
+      const c = new ColonyEngagementClient(service as never, runtime, config());
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.refreshKarmaWithAutoRotate).toHaveBeenCalled();
+      expect(service.maybeRefreshKarma).not.toHaveBeenCalled();
+      await c.stop();
+    });
   });
 
   describe("self-check", () => {
@@ -797,6 +808,171 @@ describe("ColonyEngagementClient", () => {
       await c.start();
       await vi.advanceTimersByTimeAsync(2001);
       expect(service.client.createComment).not.toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("classifier returning COMMENT → falls through to normal generation (v0.13.0)", async () => {
+      let i = 0;
+      runtime.useModel = vi.fn(async () => {
+        return ["COMMENT", "A substantive comment."][i++] ?? "";
+      });
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p-comment", title: "T", body: "B", author: { username: "a" } }],
+      });
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ reactionMode: true }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.client.createComment).toHaveBeenCalled();
+      // classifier + generation = 2 useModel calls
+      expect(runtime.useModel).toHaveBeenCalledTimes(2);
+      await c.stop();
+    });
+
+    it("classifier prompt includes thread comments when present (v0.13.0)", async () => {
+      runtime.useModel = vi.fn(async () => "SKIP");
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p-ctx", title: "T", body: "B", author: { username: "a" } }],
+      });
+      (service.client as unknown as Record<string, unknown>).getComments = vi.fn(async () => [
+        { body: "first comment", author: { username: "bob" } },
+      ]);
+      const c = new ColonyEngagementClient(service as never, runtime, config({
+        reactionMode: true,
+        threadComments: 3,
+      }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const classifierPrompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(classifierPrompt).toContain("Recent comments (1)");
+      expect(classifierPrompt).toContain("@bob: first comment");
+      await c.stop();
+    });
+
+    it("classifier handles post with missing title and body (v0.13.0)", async () => {
+      runtime.useModel = vi.fn(async () => "SKIP");
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p-bare", author: { username: "a" } }], // no title, no body
+      });
+      const c = new ColonyEngagementClient(service as never, runtime, config({
+        reactionMode: true,
+      }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(runtime.useModel).toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("classifier handles thread comments with missing author/body (v0.13.0)", async () => {
+      runtime.useModel = vi.fn(async () => "SKIP");
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p-missing", title: "T", body: "B", author: { username: "a" } }],
+      });
+      (service.client as unknown as Record<string, unknown>).getComments = vi.fn(async () => [
+        {}, // no author, no body — exercises both ?? fallbacks in the classifier snippet
+      ]);
+      const c = new ColonyEngagementClient(service as never, runtime, config({
+        reactionMode: true,
+        threadComments: 3,
+      }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const classifierPrompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(classifierPrompt).toContain("@unknown:");
+      await c.stop();
+    });
+
+    it("classifier returning REACT_FIRE triggers reactPost (v0.13.0)", async () => {
+      runtime.useModel = vi.fn(async () => "REACT_FIRE");
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p-fire", title: "Shipped X", body: "details", author: { username: "a" } }],
+      });
+      (service.client as unknown as Record<string, unknown>).reactPost = vi.fn(async () => ({}));
+      const c = new ColonyEngagementClient(service as never, runtime, config({ reactionMode: true }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(
+        (service.client as unknown as Record<string, ReturnType<typeof vi.fn>>).reactPost,
+      ).toHaveBeenCalledWith("p-fire", "fire");
+      expect(service.client.createComment).not.toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("classifier returning SKIP marks seen without posting (v0.13.0)", async () => {
+      runtime.useModel = vi.fn(async () => "SKIP");
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p-skip", title: "T", body: "B", author: { username: "a" } }],
+      });
+      const c = new ColonyEngagementClient(service as never, runtime, config({ reactionMode: true }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.client.createComment).not.toHaveBeenCalled();
+      expect(runtime.setCache).toHaveBeenCalled(); // markSeen ran
+      await c.stop();
+    });
+
+    it("classifier failure falls back to COMMENT (v0.13.0)", async () => {
+      let i = 0;
+      runtime.useModel = vi.fn(async () => {
+        if (i++ === 0) throw new Error("model down");
+        return "A comment.";
+      });
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p-fallback", title: "T", body: "B", author: { username: "a" } }],
+      });
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ reactionMode: true }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.client.createComment).toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("unrecognized classifier response falls back to COMMENT (v0.13.0)", async () => {
+      let i = 0;
+      runtime.useModel = vi.fn(async () => {
+        return ["MAYBE_REACT", "A comment."][i++] ?? "";
+      });
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p-u", title: "T", body: "B", author: { username: "a" } }],
+      });
+      service.client.createComment.mockResolvedValue({});
+      const c = new ColonyEngagementClient(service as never, runtime, config({ reactionMode: true }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(service.client.createComment).toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("dry-run reaction mode logs but doesn't call reactPost (v0.13.0)", async () => {
+      runtime.useModel = vi.fn(async () => "REACT_HEART");
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p-dry", title: "T", body: "B", author: { username: "a" } }],
+      });
+      const reactSpy = vi.fn();
+      (service.client as unknown as Record<string, unknown>).reactPost = reactSpy;
+      const c = new ColonyEngagementClient(service as never, runtime, config({
+        reactionMode: true,
+        dryRun: true,
+      }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(reactSpy).not.toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("reactPost failure is logged but doesn't crash (v0.13.0)", async () => {
+      runtime.useModel = vi.fn(async () => "REACT_LAUGH");
+      service.client.getPosts.mockResolvedValue({
+        items: [{ id: "p-fail", title: "T", body: "B", author: { username: "a" } }],
+      });
+      (service.client as unknown as Record<string, unknown>).reactPost = vi.fn(async () => {
+        throw new Error("403");
+      });
+      const c = new ColonyEngagementClient(service as never, runtime, config({ reactionMode: true }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      // No crash
       await c.stop();
     });
 

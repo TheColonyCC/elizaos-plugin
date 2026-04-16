@@ -472,4 +472,324 @@ describe("ColonyService", () => {
       await service.stop();
     });
   });
+
+  describe("activity log persistence (v0.13.0)", () => {
+    it("loads the ring buffer from runtime cache on start", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const existing = [
+        { ts: Date.now() - 60_000, type: "post_created", target: "old-p" },
+      ];
+      const store = new Map<string, unknown>();
+      store.set("colony/activity-log/k", existing);
+      const runtime = fakeRuntime(null, { COLONY_API_KEY: "col_a" });
+      const rt = runtime as unknown as Record<string, unknown>;
+      rt.getCache = vi.fn(async (k: string) => store.get(k));
+      rt.setCache = vi.fn(async (k: string, v: unknown) => {
+        store.set(k, v);
+      });
+      const service = await ColonyService.start(runtime);
+      expect(service.activityLog).toEqual(existing);
+    });
+
+    it("writes on each recordActivity call", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const setCache = vi.fn(async () => undefined);
+      const runtime = fakeRuntime(null, { COLONY_API_KEY: "col_a" });
+      const rt = runtime as unknown as Record<string, unknown>;
+      rt.getCache = vi.fn(async () => undefined);
+      rt.setCache = setCache;
+      const service = await ColonyService.start(runtime);
+      service.recordActivity("post_created", "p1");
+      // Give the fire-and-forget persistence time to run
+      await new Promise((r) => setTimeout(r, 0));
+      expect(setCache).toHaveBeenCalledWith(
+        "colony/activity-log/k",
+        expect.arrayContaining([expect.objectContaining({ type: "post_created" })]),
+      );
+    });
+
+    it("tolerates cache load returning non-array", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const runtime = fakeRuntime(null, { COLONY_API_KEY: "col_a" });
+      const rt = runtime as unknown as Record<string, unknown>;
+      rt.getCache = vi.fn(async () => "garbage");
+      rt.setCache = vi.fn();
+      const service = await ColonyService.start(runtime);
+      expect(service.activityLog).toEqual([]);
+    });
+
+    it("tolerates cache load throwing", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const runtime = fakeRuntime(null, { COLONY_API_KEY: "col_a" });
+      const rt = runtime as unknown as Record<string, unknown>;
+      rt.getCache = vi.fn(async () => {
+        throw new Error("cache down");
+      });
+      rt.setCache = vi.fn();
+      const service = await ColonyService.start(runtime);
+      expect(service.activityLog).toEqual([]);
+    });
+
+    it("tolerates cache write throwing (fire-and-forget)", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const runtime = fakeRuntime(null, { COLONY_API_KEY: "col_a" });
+      const rt = runtime as unknown as Record<string, unknown>;
+      rt.getCache = vi.fn(async () => undefined);
+      rt.setCache = vi.fn(async () => {
+        throw new Error("cache down");
+      });
+      const service = await ColonyService.start(runtime);
+      // Should not throw
+      service.recordActivity("post_created", "p");
+      await new Promise((r) => setTimeout(r, 0));
+      expect(service.activityLog.length).toBe(1);
+    });
+
+    it("no-op when runtime lacks getCache/setCache", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      service.recordActivity("post_created", "p");
+      expect(service.activityLog.length).toBe(1);
+    });
+
+    it("uses 'unknown' cache key when service has no username (v0.13.0)", async () => {
+      mockGetMe.mockResolvedValue({}); // no username
+      const runtime = fakeRuntime(null, { COLONY_API_KEY: "col_a" });
+      const rt = runtime as unknown as Record<string, unknown>;
+      const setCache = vi.fn(async () => undefined);
+      rt.getCache = vi.fn(async () => undefined);
+      rt.setCache = setCache;
+      const service = await ColonyService.start(runtime);
+      service.recordActivity("post_created", "p");
+      await new Promise((r) => setTimeout(r, 0));
+      expect(setCache).toHaveBeenCalledWith(
+        "colony/activity-log/unknown",
+        expect.any(Array),
+      );
+    });
+  });
+
+  describe("rotateApiKey (v0.13.0)", () => {
+    it("returns new key and rebuilds client on success", async () => {
+      const rotateKey = vi.fn(async () => ({ api_key: "col_newkey" }));
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      ColonyClientCtor.mockImplementation(() => ({
+        getMe: mockGetMe,
+        getNotifications: mockGetNotifications,
+        markNotificationRead: vi.fn(async () => undefined),
+        rotateKey,
+      }));
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      const newKey = await service.rotateApiKey();
+      expect(newKey).toBe("col_newkey");
+      expect(service.colonyConfig.apiKey).toBe("col_newkey");
+      expect(rotateKey).toHaveBeenCalled();
+    });
+
+    it("returns null when rotateKey throws", async () => {
+      const rotateKey = vi.fn(async () => {
+        throw new Error("403");
+      });
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      ColonyClientCtor.mockImplementation(() => ({
+        getMe: mockGetMe,
+        getNotifications: mockGetNotifications,
+        markNotificationRead: vi.fn(async () => undefined),
+        rotateKey,
+      }));
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      expect(await service.rotateApiKey()).toBeNull();
+    });
+
+    it("returns null when rotateKey response has no api_key", async () => {
+      const rotateKey = vi.fn(async () => ({}));
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      ColonyClientCtor.mockImplementation(() => ({
+        getMe: mockGetMe,
+        getNotifications: mockGetNotifications,
+        markNotificationRead: vi.fn(async () => undefined),
+        rotateKey,
+      }));
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      expect(await service.rotateApiKey()).toBeNull();
+    });
+  });
+
+  describe("refreshKarmaWithAutoRotate (v0.13.0)", () => {
+    it("returns karma on first success", async () => {
+      mockGetMe
+        .mockResolvedValueOnce({ username: "k", karma: 5 })
+        .mockResolvedValueOnce({ username: "k", karma: 10 });
+      const service = await ColonyService.start(
+        fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+      );
+      expect(await service.refreshKarmaWithAutoRotate()).toBe(10);
+    });
+
+    it("returns null without attempting rotation when autoRotateKey is false", async () => {
+      mockGetMe
+        .mockResolvedValueOnce({ username: "k", karma: 5 })
+        .mockRejectedValueOnce(new Error("auth"));
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_AUTO_ROTATE_KEY: "false",
+        }),
+      );
+      expect(await service.refreshKarmaWithAutoRotate()).toBeNull();
+    });
+
+    it("attempts rotation when autoRotateKey is true and refresh fails", async () => {
+      const rotateKey = vi.fn(async () => ({ api_key: "col_new" }));
+      mockGetMe
+        .mockResolvedValueOnce({ username: "k", karma: 5 }) // startup
+        .mockRejectedValueOnce(new Error("auth")) // initial refresh fails
+        .mockResolvedValueOnce({ username: "k", karma: 15 }); // post-rotate refresh
+      ColonyClientCtor.mockImplementation(() => ({
+        getMe: mockGetMe,
+        getNotifications: mockGetNotifications,
+        markNotificationRead: vi.fn(async () => undefined),
+        rotateKey,
+      }));
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_AUTO_ROTATE_KEY: "true",
+        }),
+      );
+      expect(await service.refreshKarmaWithAutoRotate()).toBe(15);
+      expect(rotateKey).toHaveBeenCalled();
+    });
+
+    it("returns null when rotation itself fails", async () => {
+      const rotateKey = vi.fn(async () => {
+        throw new Error("revoked");
+      });
+      mockGetMe
+        .mockResolvedValueOnce({ username: "k", karma: 5 })
+        .mockRejectedValueOnce(new Error("auth"));
+      ColonyClientCtor.mockImplementation(() => ({
+        getMe: mockGetMe,
+        getNotifications: mockGetNotifications,
+        markNotificationRead: vi.fn(async () => undefined),
+        rotateKey,
+      }));
+      const service = await ColonyService.start(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          COLONY_AUTO_ROTATE_KEY: "true",
+        }),
+      );
+      expect(await service.refreshKarmaWithAutoRotate()).toBeNull();
+    });
+  });
+
+  describe("activity webhook (v0.13.0)", () => {
+    async function flushPromises() {
+      // Multiple macrotask ticks so the fire-and-forget fetch has time
+      // to await its hmac compute + fetch call in full.
+      for (let i = 0; i < 5; i++) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+
+    it("POSTs to the webhook URL on recordActivity", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const fetchSpy = vi.fn(async () => ({ ok: true })) as unknown as typeof fetch;
+      const origFetch = globalThis.fetch;
+      globalThis.fetch = fetchSpy;
+      try {
+        const service = await ColonyService.start(
+          fakeRuntime(null, {
+            COLONY_API_KEY: "col_a",
+            COLONY_ACTIVITY_WEBHOOK_URL: "https://example.com/hook",
+            COLONY_ACTIVITY_WEBHOOK_SECRET: "shh",
+          }),
+        );
+        service.recordActivity("post_created", "p1", "details");
+        await flushPromises();
+        expect(fetchSpy).toHaveBeenCalledWith(
+          "https://example.com/hook",
+          expect.objectContaining({
+            method: "POST",
+            headers: expect.objectContaining({
+              "Content-Type": "application/json",
+              "X-Colony-Signature": expect.any(String),
+            }),
+          }),
+        );
+      } finally {
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    it("does not POST when webhook URL is empty", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const fetchSpy = vi.fn();
+      const origFetch = globalThis.fetch;
+      globalThis.fetch = fetchSpy as unknown as typeof fetch;
+      try {
+        const service = await ColonyService.start(
+          fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
+        );
+        service.recordActivity("post_created", "p1");
+        await flushPromises();
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    it("swallows fetch errors", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const fetchSpy = vi.fn(async () => {
+        throw new Error("network");
+      });
+      const origFetch = globalThis.fetch;
+      globalThis.fetch = fetchSpy as unknown as typeof fetch;
+      try {
+        const service = await ColonyService.start(
+          fakeRuntime(null, {
+            COLONY_API_KEY: "col_a",
+            COLONY_ACTIVITY_WEBHOOK_URL: "https://example.com/hook",
+          }),
+        );
+        service.recordActivity("post_created", "p1");
+        await flushPromises();
+        expect(fetchSpy).toHaveBeenCalled();
+      } finally {
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    it("omits signature header when no secret configured", async () => {
+      mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
+      const fetchSpy = vi.fn(async () => ({ ok: true })) as unknown as typeof fetch;
+      const origFetch = globalThis.fetch;
+      globalThis.fetch = fetchSpy;
+      try {
+        const service = await ColonyService.start(
+          fakeRuntime(null, {
+            COLONY_API_KEY: "col_a",
+            COLONY_ACTIVITY_WEBHOOK_URL: "https://example.com/hook",
+          }),
+        );
+        service.recordActivity("post_created", "p1");
+        await flushPromises();
+        const call = (fetchSpy as unknown as { mock: { calls: unknown[][] } }).mock.calls[0];
+        const headers = (call![1] as { headers: Record<string, string> }).headers;
+        expect(headers["X-Colony-Signature"]).toBeUndefined();
+      } finally {
+        globalThis.fetch = origFetch;
+      }
+    });
+  });
 });

@@ -28,9 +28,11 @@ import {
 import type { ColonyService } from "./colony.service.js";
 import { scorePost } from "./post-scorer.js";
 import { emitEvent } from "../utils/emitEvent.js";
+import { RetryQueue } from "./retry-queue.js";
 
 const CACHE_KEY_PREFIX = "colony/post-client/recent";
 const DAILY_LEDGER_PREFIX = "colony/post-client/daily";
+const RETRY_QUEUE_PREFIX = "colony/post-client/retry";
 const RECENT_POST_RING_SIZE = 10;
 const DAILY_WINDOW_MS = 24 * 3600 * 1000;
 
@@ -99,17 +101,43 @@ export interface ColonyPostClientConfig {
   scorerModelType?: string;
   /** "text" | "json" — controls structured event output. */
   logFormat?: "text" | "json";
+  /**
+   * When true (default), transient createPost failures enqueue the
+   * rejected payload into a retry queue that drains on subsequent ticks.
+   * False disables the queue entirely — failures log and drop.
+   */
+  retryQueueEnabled?: boolean;
+  /** Max retry attempts before a queue entry is dropped. */
+  retryQueueMaxAttempts?: number;
+  /** Max age (ms) a queue entry can live before being dropped. */
+  retryQueueMaxAgeMs?: number;
+  /**
+   * When true, SPAM self-check rejections trigger a one-shot regeneration
+   * pass with a "try again being more substantive" hint, rather than
+   * dropping the tick. INJECTION and BANNED still drop immediately.
+   */
+  selfCheckRetry?: boolean;
 }
 
 export class ColonyPostClient {
   private isRunning = false;
   private pendingTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryQueue: RetryQueue | null = null;
 
   constructor(
     private readonly service: ColonyService,
     private readonly runtime: IAgentRuntime,
     private readonly config: ColonyPostClientConfig,
-  ) {}
+  ) {
+    if (config.retryQueueEnabled ?? true) {
+      const username =
+        (service as unknown as { username?: string }).username ?? "unknown";
+      this.retryQueue = new RetryQueue(runtime, `${RETRY_QUEUE_PREFIX}/${username}`, {
+        maxAttempts: config.retryQueueMaxAttempts ?? 3,
+        maxAgeMs: config.retryQueueMaxAgeMs ?? 60 * 60 * 1000,
+      });
+    }
+  }
 
   async start(): Promise<void> {
     if (this.isRunning) return;
@@ -159,10 +187,38 @@ export class ColonyPostClient {
   }
 
   private async tick(): Promise<void> {
-    await this.service.maybeRefreshKarma?.();
+    if (this.service.colonyConfig?.autoRotateKey) {
+      await this.service.refreshKarmaWithAutoRotate?.();
+    } else {
+      await this.service.maybeRefreshKarma?.();
+    }
     if (this.service.isPausedForBackoff?.()) {
       logger.debug("COLONY_POST_CLIENT: skipping tick — service paused for karma backoff");
       return;
+    }
+
+    // Drain any pending retries before attempting a new generation.
+    // If a queued retry succeeds, we still proceed with the normal tick
+    // (we don't want a queue backlog to starve fresh content).
+    if (this.retryQueue) {
+      await this.retryQueue.drain(async (entry) => {
+        const { title, body, options } = entry.payload as {
+          title: string;
+          body: string;
+          options?: Record<string, unknown>;
+        };
+        const createOpts: Parameters<typeof this.service.client.createPost>[2] = {
+          colony: this.config.colony,
+          ...(options as object),
+        };
+        await this.service.client.createPost(title, body, createOpts);
+        this.service.incrementStat?.("postsCreated");
+        this.service.recordActivity?.(
+          "post_created",
+          undefined,
+          `retry-queue delivery: ${title.slice(0, 60)}`,
+        );
+      });
     }
 
     const dailyLimit = this.config.dailyLimit;
@@ -194,7 +250,7 @@ export class ColonyPostClient {
       return;
     }
 
-    const content = cleanGeneratedPost(generated);
+    let content = cleanGeneratedPost(generated);
     if (!content) {
       logger.debug(
         "COLONY_POST_CLIENT: generation returned empty or SKIP — not posting this tick",
@@ -207,13 +263,47 @@ export class ColonyPostClient {
       return;
     }
 
-    const { title, body } = splitTitleBody(content);
+    let { title, body } = splitTitleBody(content);
 
     if (this.config.selfCheck ?? true) {
-      const score = await scorePost(this.runtime, { title, body }, {
+      let score = await scorePost(this.runtime, { title, body }, {
         bannedPatterns: this.config.bannedPatterns,
         modelType: this.config.scorerModelType,
       });
+
+      // v0.13.0: if SPAM and retry is enabled, regenerate once with a
+      // feedback hint. INJECTION + BANNED still drop immediately — they're
+      // hard failures we don't want to retry around.
+      if (score === "SPAM" && this.config.selfCheckRetry) {
+        logger.info(
+          "COLONY_POST_CLIENT: self-check SPAM — retrying generation with feedback hint",
+        );
+        const retryPrompt = `${prompt}\n\nYour previous output was rejected by a quality filter as too low-effort. Try again: be more substantive, include specific numbers / claims / references, lead with a concrete observation. Avoid empty statements and vague claims.`;
+        try {
+          const modelType = (this.config.modelType ?? ModelType.TEXT_SMALL) as never;
+          const retryGenerated = String(
+            await this.runtime.useModel(modelType, {
+              prompt: retryPrompt,
+              temperature: this.config.temperature,
+              maxTokens: this.config.maxTokens,
+            }),
+          ).trim();
+          const retryContent = cleanGeneratedPost(retryGenerated);
+          if (retryContent && !(await this.isDuplicate(retryContent))) {
+            const split = splitTitleBody(retryContent);
+            title = split.title;
+            body = split.body;
+            content = retryContent;
+            score = await scorePost(this.runtime, { title, body }, {
+              bannedPatterns: this.config.bannedPatterns,
+              modelType: this.config.scorerModelType,
+            });
+          }
+        } catch (err) {
+          logger.warn(`COLONY_POST_CLIENT: retry generation failed: ${String(err)}`);
+        }
+      }
+
       if (score === "SPAM" || score === "INJECTION" || score === "BANNED") {
         logger.warn(
           `COLONY_POST_CLIENT: self-check rejected generated post as ${score}, skipping tick`,
@@ -280,6 +370,13 @@ export class ColonyPostClient {
       }, `autopost c/${this.config.colony}: ${post.id}`);
     } catch (err) {
       logger.warn(`COLONY_POST_CLIENT: createPost failed: ${String(err)}`);
+      if (this.retryQueue) {
+        await this.retryQueue.enqueue(
+          "post",
+          { title, body, options: { colony: this.config.colony } },
+          err,
+        );
+      }
     }
   }
 

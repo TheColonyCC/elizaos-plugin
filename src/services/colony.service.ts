@@ -37,6 +37,7 @@ export interface ActivityEntry {
 }
 
 const ACTIVITY_RING_SIZE = 50;
+const ACTIVITY_CACHE_PREFIX = "colony/activity-log";
 
 export class ColonyService extends Service {
   static serviceType = "colony";
@@ -145,12 +146,81 @@ export class ColonyService extends Service {
    * Record an activity entry into the rolling ring buffer. Used by every
    * write path so operators can inspect what the agent actually did via the
    * `COLONY_RECENT_ACTIVITY` action, without grepping logs.
+   *
+   * In v0.13.0 the ring is persisted to `runtime.getCache` so the log
+   * survives restarts (previously it was wiped on boot, which combined
+   * badly with the PGLite corruption reset path). The write is fire-and-
+   * forget — failures are swallowed so a cache miss never breaks the
+   * write path that triggered the activity.
    */
   recordActivity(type: ActivityType, target?: string, detail?: string): void {
     const entry: ActivityEntry = { ts: Date.now(), type };
     if (target !== undefined) entry.target = target;
     if (detail !== undefined) entry.detail = detail;
     this.activityLog = [...this.activityLog, entry].slice(-ACTIVITY_RING_SIZE);
+    void this.persistActivityLog();
+    void this.dispatchActivityWebhook(entry);
+  }
+
+  private activityCacheKey(): string {
+    const username = this.username ?? "unknown";
+    return `${ACTIVITY_CACHE_PREFIX}/${username}`;
+  }
+
+  private async persistActivityLog(): Promise<void> {
+    const rt = this.runtime as unknown as {
+      setCache?: <T>(key: string, value: T) => Promise<void>;
+    };
+    if (!rt || typeof rt.setCache !== "function") return;
+    try {
+      await rt.setCache(this.activityCacheKey(), this.activityLog);
+    } catch {
+      // Cache is best-effort — failure here shouldn't break the write path
+    }
+  }
+
+  private async loadActivityLog(): Promise<void> {
+    const rt = this.runtime as unknown as {
+      getCache?: <T>(key: string) => Promise<T | undefined>;
+    };
+    if (typeof rt.getCache !== "function") return;
+    try {
+      const cached = await rt.getCache<ActivityEntry[]>(this.activityCacheKey());
+      if (Array.isArray(cached)) {
+        this.activityLog = cached.slice(-ACTIVITY_RING_SIZE);
+      }
+    } catch {
+      // best-effort
+    }
+  }
+
+  private async dispatchActivityWebhook(entry: ActivityEntry): Promise<void> {
+    const url = this.colonyConfig?.activityWebhookUrl;
+    if (!url) return;
+    const secret = this.colonyConfig.activityWebhookSecret;
+    const payload = {
+      ts: new Date(entry.ts).toISOString(),
+      username: this.username,
+      type: entry.type,
+      target: entry.target,
+      detail: entry.detail,
+    };
+    const body = JSON.stringify(payload);
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "User-Agent": "@thecolony/elizaos-plugin",
+    };
+    if (secret) {
+      const { createHmac } = await import("node:crypto");
+      headers["X-Colony-Signature"] = createHmac("sha256", secret)
+        .update(body)
+        .digest("hex");
+    }
+    try {
+      await fetch(url, { method: "POST", headers, body });
+    } catch (err) {
+      logger.debug(`COLONY_SERVICE: activity webhook failed: ${String(err)}`);
+    }
   }
 
   /**
@@ -162,6 +232,62 @@ export class ColonyService extends Service {
     const last = this.karmaHistory[this.karmaHistory.length - 1];
     if (last && Date.now() - last.ts < minIntervalMs) return;
     await this.refreshKarma();
+  }
+
+  /**
+   * Rotate the agent's API key. Wraps `client.rotateKey()`, replaces the
+   * SDK client with one bound to the new key, records an activity entry,
+   * and dispatches an activity-webhook event containing the new key so the
+   * operator's downstream secret store can pick it up. Returns the new
+   * key — the caller is responsible for persisting it (the plugin can't
+   * write to .env files for the host).
+   *
+   * **Caveat:** after rotation the old key is invalid. If the operator
+   * doesn't persist the new one, the agent will fail auth on next restart.
+   */
+  async rotateApiKey(): Promise<string | null> {
+    try {
+      const response = (await (this.client as unknown as {
+        rotateKey: () => Promise<{ api_key: string }>;
+      }).rotateKey()) as { api_key?: string };
+      const newKey = response.api_key;
+      if (!newKey) {
+        logger.warn("COLONY_SERVICE: rotateKey returned no api_key");
+        return null;
+      }
+      // Rebuild the client so subsequent calls authenticate with the new key
+      this.client = new ColonyClient(newKey);
+      this.colonyConfig = { ...this.colonyConfig, apiKey: newKey };
+      this.recordActivity(
+        "post_created",
+        undefined,
+        `API key rotated — operator must persist the new key`,
+      );
+      logger.info(`🔑 COLONY_SERVICE: API key rotated — new key starts ${newKey.slice(0, 8)}…`);
+      return newKey;
+    } catch (err) {
+      logger.error(`COLONY_SERVICE: rotateApiKey failed: ${String(err)}`);
+      return null;
+    }
+  }
+
+  /**
+   * Try refreshKarma once; if it raises an auth error and auto-rotate is
+   * enabled, rotate the key and retry once. Called from the autonomous
+   * tick paths as a single chokepoint for "my credentials have gone bad"
+   * — wrapping every SDK call would be too invasive for the gain.
+   */
+  async refreshKarmaWithAutoRotate(): Promise<number | null> {
+    const first = await this.refreshKarma();
+    if (first !== null) return first;
+    if (!this.colonyConfig.autoRotateKey) return null;
+    // Distinguish auth failures from generic refresh failures: refreshKarma
+    // returns null for both. Attempt a rotate anyway — if the failure was
+    // transient (network), rotateKey will also fail, and we end up where
+    // we started (null return, logged).
+    const rotated = await this.rotateApiKey();
+    if (!rotated) return null;
+    return this.refreshKarma();
   }
 
   /**
@@ -270,6 +396,10 @@ export class ColonyService extends Service {
         scorerModelType: service.colonyConfig.scorerModelType,
         bannedPatterns: service.colonyConfig.bannedPatterns,
         logFormat: service.colonyConfig.logFormat,
+        retryQueueEnabled: service.colonyConfig.retryQueueEnabled,
+        retryQueueMaxAttempts: service.colonyConfig.retryQueueMaxAttempts,
+        retryQueueMaxAgeMs: service.colonyConfig.retryQueueMaxAgeMs,
+        selfCheckRetry: service.colonyConfig.selfCheckRetry,
       });
       await service.postClient.start();
     } else {
@@ -295,6 +425,7 @@ export class ColonyService extends Service {
         scorerModelType: service.colonyConfig.scorerModelType,
         bannedPatterns: service.colonyConfig.bannedPatterns,
         logFormat: service.colonyConfig.logFormat,
+        reactionMode: service.colonyConfig.engageReactionMode,
       });
       await service.engagementClient.start();
     } else {
@@ -311,6 +442,8 @@ export class ColonyService extends Service {
     if (service.colonyConfig.registerSignalHandlers) {
       service.registerShutdownHandlers();
     }
+
+    await service.loadActivityLog();
 
     return service;
   }

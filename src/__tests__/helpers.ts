@@ -90,8 +90,18 @@ export interface FakeService {
     scorerModelType?: string;
     registerSignalHandlers?: boolean;
     logFormat?: "text" | "json";
+    retryQueueEnabled?: boolean;
+    retryQueueMaxAttempts?: number;
+    retryQueueMaxAgeMs?: number;
+    engageReactionMode?: boolean;
+    autoRotateKey?: boolean;
+    selfCheckRetry?: boolean;
+    activityWebhookUrl?: string;
+    activityWebhookSecret?: string;
   };
   cooldown?: ReturnType<typeof vi.fn>;
+  rotateApiKey?: ReturnType<typeof vi.fn>;
+  refreshKarmaWithAutoRotate?: ReturnType<typeof vi.fn>;
   incrementStat?: ReturnType<typeof vi.fn>;
   recordActivity?: ReturnType<typeof vi.fn>;
   refreshKarma?: ReturnType<typeof vi.fn>;
@@ -162,9 +172,19 @@ export function fakeService(
       scorerModelType: "TEXT_SMALL",
       registerSignalHandlers: false,
       logFormat: "text" as "text" | "json",
+      retryQueueEnabled: false,
+      retryQueueMaxAttempts: 3,
+      retryQueueMaxAgeMs: 60 * 60 * 1000,
+      engageReactionMode: false,
+      autoRotateKey: false,
+      selfCheckRetry: false,
+      activityWebhookUrl: "",
+      activityWebhookSecret: "",
       ...configOverrides,
     },
     cooldown: vi.fn((ms: number) => Date.now() + ms),
+    rotateApiKey: vi.fn(async () => null),
+    refreshKarmaWithAutoRotate: vi.fn(async () => null),
     incrementStat: vi.fn(),
     recordActivity: vi.fn(),
     refreshKarma: vi.fn(async () => null),

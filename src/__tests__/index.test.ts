@@ -22,6 +22,11 @@ import ColonyPlugin, {
   deleteColonyCommentAction,
   colonyCooldownAction,
   createColonyPollAction,
+  joinColonyAction,
+  leaveColonyAction,
+  listColoniesAction,
+  updateColonyProfileAction,
+  rotateColonyKeyAction,
   colonyFeedProvider,
 } from "../index.js";
 import { fakeRuntime } from "./helpers.js";
@@ -62,6 +67,11 @@ describe("ColonyPlugin", () => {
       deleteColonyCommentAction,
       colonyCooldownAction,
       createColonyPollAction,
+      joinColonyAction,
+      leaveColonyAction,
+      listColoniesAction,
+      updateColonyProfileAction,
+      rotateColonyKeyAction,
     ]);
     expect(ColonyPlugin.providers).toContain(colonyFeedProvider);
   });

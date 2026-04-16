@@ -80,7 +80,27 @@ export interface ColonyEngagementClientConfig {
   bannedPatterns?: RegExp[];
   /** "text" | "json" — controls structured event output. */
   logFormat?: "text" | "json";
+  /**
+   * When true, the engagement tick starts with a lightweight classifier
+   * pass that decides whether to COMMENT, react with an emoji, or SKIP
+   * the candidate. Reactions are cheaper and more natural for posts that
+   * invite agreement/amusement rather than substantive reply. Default
+   * false — opt-in, behavior with `false` is unchanged (always COMMENT).
+   */
+  reactionMode?: boolean;
 }
+
+const REACTION_EMOJIS = [
+  "fire",
+  "thinking",
+  "heart",
+  "laugh",
+  "rocket",
+  "clap",
+] as const;
+
+type ReactionEmoji = (typeof REACTION_EMOJIS)[number];
+type EngagementMode = "COMMENT" | `REACT_${Uppercase<ReactionEmoji>}` | "SKIP";
 
 type PostLike = {
   id: string;
@@ -156,7 +176,11 @@ export class ColonyEngagementClient {
   private async tick(): Promise<void> {
     if (!this.config.colonies.length) return;
 
-    await this.service.maybeRefreshKarma?.();
+    if (this.service.colonyConfig?.autoRotateKey) {
+      await this.service.refreshKarmaWithAutoRotate?.();
+    } else {
+      await this.service.maybeRefreshKarma?.();
+    }
     if (this.service.isPausedForBackoff?.()) {
       logger.debug("COLONY_ENGAGEMENT_CLIENT: skipping tick — service paused for karma backoff");
       return;
@@ -211,6 +235,24 @@ export class ColonyEngagementClient {
     }
 
     const threadComments = await this.fetchThreadComments(candidate.id);
+
+    // v0.13.0: intelligent classifier — decide whether to comment, react, or skip
+    if (this.config.reactionMode) {
+      const mode = await this.classifyEngagementMode(candidate, threadComments);
+      if (mode === "SKIP") {
+        logger.debug(
+          `COLONY_ENGAGEMENT_CLIENT: classifier chose SKIP for ${candidate.id} in c/${colony}`,
+        );
+        await this.markSeen(candidate.id);
+        return;
+      }
+      if (mode !== "COMMENT") {
+        const emoji = mode.replace("REACT_", "").toLowerCase() as ReactionEmoji;
+        await this.reactAndMarkSeen(candidate, emoji, colony);
+        return;
+      }
+      // mode === "COMMENT" — fall through to the normal generation path
+    }
 
     const prompt = this.buildPrompt(colony, candidate, threadComments);
     if (!prompt) {
@@ -404,6 +446,126 @@ export class ColonyEngagementClient {
         `COLONY_ENGAGEMENT_CLIENT: getComments(${postId}) failed, proceeding without thread context: ${String(err)}`,
       );
       return [];
+    }
+  }
+
+  /**
+   * Intelligent engagement-mode classifier. Given the candidate post and
+   * any fetched thread comments, returns one of COMMENT / REACT_FIRE /
+   * REACT_THINKING / REACT_HEART / REACT_LAUGH / REACT_ROCKET / REACT_CLAP
+   * / SKIP.
+   *
+   * Rationale: some posts invite substantive comment (questions, analyses,
+   * proposals). Others invite a cheaper affirmation or light-touch
+   * engagement (a clever finding, a shipping announcement, a funny
+   * observation). Probabilistic 50/50 behavior reads as random; this
+   * classifier picks based on post characteristics.
+   */
+  private async classifyEngagementMode(
+    post: PostLike,
+    threadComments: CommentLike[],
+  ): Promise<EngagementMode> {
+    const title = (post.title ?? "").slice(0, 200);
+    const body = (post.body ?? "").slice(0, 1200);
+    const recentCommentSnippets = threadComments
+      .slice(0, 3)
+      .map((c) => `@${c.author?.username ?? "unknown"}: ${(c.body ?? "").slice(0, 200)}`)
+      .join("\n");
+
+    const prompt = [
+      "Decide how an AI agent should engage with a recent post on The Colony social network.",
+      "",
+      "Output exactly one label from this list:",
+      "- COMMENT — post warrants a substantive 2-4 sentence reply (questions, analyses, proposals, debates, technical content)",
+      "- REACT_FIRE — post is an impressive result or announcement worth amplifying without commentary",
+      "- REACT_THINKING — post raises something interesting to chew on, not ready to reply substantively",
+      "- REACT_HEART — post is warm, supportive, or personally meaningful",
+      "- REACT_LAUGH — post is genuinely funny",
+      "- REACT_ROCKET — post is a ship / launch / milestone announcement",
+      "- REACT_CLAP — post is a recognition-worthy accomplishment by another agent",
+      "- SKIP — not worth engaging with (low quality, off-topic, already saturated with comments)",
+      "",
+      "Default to SKIP when unsure. Reserve COMMENT for posts that would meaningfully benefit from a reply.",
+      "Reserve reactions for posts where reaction-without-comment is the natural response.",
+      "",
+      `Post title: ${title}`,
+      `Post body: ${body}`,
+      recentCommentSnippets
+        ? `\nRecent comments (${threadComments.length}):\n${recentCommentSnippets}`
+        : "",
+      "",
+      "Respond with exactly one label. No explanation, no preamble.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    let raw: string;
+    try {
+      const modelType = (this.config.scorerModelType ?? ModelType.TEXT_SMALL) as never;
+      raw = String(
+        await this.runtime.useModel(modelType, {
+          prompt,
+          temperature: 0.2,
+          maxTokens: 15,
+        }),
+      )
+        .trim()
+        .toUpperCase();
+    } catch (err) {
+      logger.debug(
+        `COLONY_ENGAGEMENT_CLIENT: classifier failed, falling back to COMMENT: ${String(err)}`,
+      );
+      return "COMMENT";
+    }
+
+    if (/\bSKIP\b/.test(raw)) return "SKIP";
+    if (/\bCOMMENT\b/.test(raw)) return "COMMENT";
+    for (const emoji of REACTION_EMOJIS) {
+      const label = `REACT_${emoji.toUpperCase()}` as EngagementMode;
+      if (raw.includes(label)) return label;
+    }
+    // Unrecognized → fall through to COMMENT (safe-ish default; goes
+    // through the existing generation + self-check pipeline)
+    return "COMMENT";
+  }
+
+  private async reactAndMarkSeen(
+    candidate: PostLike,
+    emoji: ReactionEmoji,
+    colony: string,
+  ): Promise<void> {
+    if (this.config.dryRun) {
+      logger.info(
+        `🌐 COLONY_ENGAGEMENT_CLIENT [DRY RUN] would react ${emoji} on post ${candidate.id} in c/${colony}`,
+      );
+      await this.markSeen(candidate.id);
+      return;
+    }
+    try {
+      await (this.service.client as unknown as {
+        reactPost: (postId: string, emoji: string) => Promise<unknown>;
+      }).reactPost(candidate.id, emoji);
+      logger.info(
+        `🌐 COLONY_ENGAGEMENT_CLIENT reacted ${emoji} on post ${candidate.id} in c/${colony}`,
+      );
+      this.service.recordActivity?.(
+        "vote_cast",
+        candidate.id,
+        `reaction ${emoji} c/${colony}`,
+      );
+      emitEvent(this.config.logFormat ?? "text", {
+        level: "info",
+        event: "reaction.created",
+        postId: candidate.id,
+        emoji,
+        colony,
+        autonomous: true,
+      }, `engagement reaction ${emoji} on ${candidate.id}`);
+      await this.markSeen(candidate.id);
+    } catch (err) {
+      logger.warn(
+        `COLONY_ENGAGEMENT_CLIENT: reactPost(${candidate.id}, ${emoji}) failed: ${String(err)}`,
+      );
     }
   }
 

@@ -20,6 +20,13 @@ import { editColonyPostAction } from "./actions/editPost.js";
 import { deleteColonyPostAction, deleteColonyCommentAction } from "./actions/deletePost.js";
 import { colonyCooldownAction } from "./actions/cooldown.js";
 import { createColonyPollAction } from "./actions/createPoll.js";
+import {
+  joinColonyAction,
+  leaveColonyAction,
+  listColoniesAction,
+} from "./actions/colonyMembership.js";
+import { updateColonyProfileAction } from "./actions/updateProfile.js";
+import { rotateColonyKeyAction } from "./actions/rotateKey.js";
 import { colonyFeedProvider } from "./providers/feed.js";
 import { getSetting } from "./utils/settings.js";
 
@@ -50,6 +57,11 @@ export const ColonyPlugin: Plugin = {
     deleteColonyCommentAction,
     colonyCooldownAction,
     createColonyPollAction,
+    joinColonyAction,
+    leaveColonyAction,
+    listColoniesAction,
+    updateColonyProfileAction,
+    rotateColonyKeyAction,
   ],
   providers: [colonyFeedProvider],
   init: async (_config: Record<string, string>, runtime: IAgentRuntime) => {
@@ -94,6 +106,18 @@ export {
 } from "./actions/deletePost.js";
 export { colonyCooldownAction } from "./actions/cooldown.js";
 export { createColonyPollAction } from "./actions/createPoll.js";
+export {
+  joinColonyAction,
+  leaveColonyAction,
+  listColoniesAction,
+} from "./actions/colonyMembership.js";
+export { updateColonyProfileAction } from "./actions/updateProfile.js";
+export { rotateColonyKeyAction } from "./actions/rotateKey.js";
+export {
+  RetryQueue,
+  type RetryEntry,
+  type RetryQueueConfig,
+} from "./services/retry-queue.js";
 export { colonyFeedProvider } from "./providers/feed.js";
 export {
   verifyAndDispatchWebhook,

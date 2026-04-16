@@ -65,6 +65,14 @@ describe("loadColonyConfig", () => {
       scorerModelType: "TEXT_SMALL",
       registerSignalHandlers: false,
       logFormat: "text",
+      retryQueueEnabled: true,
+      retryQueueMaxAttempts: 3,
+      retryQueueMaxAgeMs: 60 * 60 * 1000,
+      engageReactionMode: false,
+      autoRotateKey: false,
+      selfCheckRetry: false,
+      activityWebhookUrl: "",
+      activityWebhookSecret: "",
     });
   });
 
@@ -622,5 +630,91 @@ describe("loadColonyConfig", () => {
         COLONY_LOG_FORMAT: "garbage",
       })).logFormat,
     ).toBe("text");
+  });
+
+  // v0.13.0
+  it("parses retry queue vars", () => {
+    const c = loadColonyConfig(fakeRuntime(null, {
+      COLONY_API_KEY: "col_a",
+      COLONY_RETRY_QUEUE_ENABLED: "false",
+      COLONY_RETRY_QUEUE_MAX_ATTEMPTS: "5",
+      COLONY_RETRY_QUEUE_MAX_AGE_MIN: "30",
+    }));
+    expect(c.retryQueueEnabled).toBe(false);
+    expect(c.retryQueueMaxAttempts).toBe(5);
+    expect(c.retryQueueMaxAgeMs).toBe(30 * 60 * 1000);
+  });
+
+  it("clamps retry queue bounds", () => {
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_RETRY_QUEUE_MAX_ATTEMPTS: "999",
+      })).retryQueueMaxAttempts,
+    ).toBe(10);
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_RETRY_QUEUE_MAX_ATTEMPTS: "0",
+      })).retryQueueMaxAttempts,
+    ).toBe(1);
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_RETRY_QUEUE_MAX_AGE_MIN: "99999",
+      })).retryQueueMaxAgeMs,
+    ).toBe(10_080 * 60 * 1000);
+  });
+
+  it("falls back retry queue vars on unparseable", () => {
+    const c = loadColonyConfig(fakeRuntime(null, {
+      COLONY_API_KEY: "col_a",
+      COLONY_RETRY_QUEUE_MAX_ATTEMPTS: "abc",
+      COLONY_RETRY_QUEUE_MAX_AGE_MIN: "xyz",
+    }));
+    expect(c.retryQueueMaxAttempts).toBe(3);
+    expect(c.retryQueueMaxAgeMs).toBe(60 * 60 * 1000);
+  });
+
+  it("parses COLONY_ENGAGE_REACTION_MODE", () => {
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_ENGAGE_REACTION_MODE: "true",
+      })).engageReactionMode,
+    ).toBe(true);
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+      })).engageReactionMode,
+    ).toBe(false);
+  });
+
+  it("parses COLONY_AUTO_ROTATE_KEY", () => {
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_AUTO_ROTATE_KEY: "true",
+      })).autoRotateKey,
+    ).toBe(true);
+  });
+
+  it("parses COLONY_SELF_CHECK_RETRY", () => {
+    expect(
+      loadColonyConfig(fakeRuntime(null, {
+        COLONY_API_KEY: "col_a",
+        COLONY_SELF_CHECK_RETRY: "1",
+      })).selfCheckRetry,
+    ).toBe(true);
+  });
+
+  it("parses activity webhook vars", () => {
+    const c = loadColonyConfig(fakeRuntime(null, {
+      COLONY_API_KEY: "col_a",
+      COLONY_ACTIVITY_WEBHOOK_URL: "https://example.com/hook",
+      COLONY_ACTIVITY_WEBHOOK_SECRET: "shh",
+    }));
+    expect(c.activityWebhookUrl).toBe("https://example.com/hook");
+    expect(c.activityWebhookSecret).toBe("shh");
   });
 });

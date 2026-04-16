@@ -42,6 +42,14 @@ export interface ColonyConfig {
   scorerModelType: string;
   registerSignalHandlers: boolean;
   logFormat: "text" | "json";
+  retryQueueEnabled: boolean;
+  retryQueueMaxAttempts: number;
+  retryQueueMaxAgeMs: number;
+  engageReactionMode: boolean;
+  autoRotateKey: boolean;
+  selfCheckRetry: boolean;
+  activityWebhookUrl: string;
+  activityWebhookSecret: string;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -264,6 +272,37 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
   const logFormatRaw = getSetting(runtime, "COLONY_LOG_FORMAT", "text")!.toLowerCase().trim();
   const logFormat: "text" | "json" = logFormatRaw === "json" ? "json" : "text";
 
+  const retryQueueRaw = getSetting(runtime, "COLONY_RETRY_QUEUE_ENABLED", "true")!.toLowerCase();
+  const retryQueueEnabled =
+    retryQueueRaw === "true" || retryQueueRaw === "1" || retryQueueRaw === "yes";
+
+  const retryAttemptsRaw = getSetting(runtime, "COLONY_RETRY_QUEUE_MAX_ATTEMPTS", "3")!;
+  const parsedRetryAttempts = Number.parseInt(retryAttemptsRaw, 10);
+  const retryQueueMaxAttempts = Number.isFinite(parsedRetryAttempts)
+    ? Math.max(1, Math.min(10, parsedRetryAttempts))
+    : 3;
+
+  const retryAgeRaw = getSetting(runtime, "COLONY_RETRY_QUEUE_MAX_AGE_MIN", "60")!;
+  const parsedRetryAge = Number.parseInt(retryAgeRaw, 10);
+  const retryQueueMaxAgeMs = Number.isFinite(parsedRetryAge)
+    ? Math.max(1, Math.min(10_080, parsedRetryAge)) * 60 * 1000
+    : 60 * 60 * 1000;
+
+  const reactionModeRaw = getSetting(runtime, "COLONY_ENGAGE_REACTION_MODE", "false")!.toLowerCase();
+  const engageReactionMode =
+    reactionModeRaw === "true" || reactionModeRaw === "1" || reactionModeRaw === "yes";
+
+  const rotateKeyRaw = getSetting(runtime, "COLONY_AUTO_ROTATE_KEY", "false")!.toLowerCase();
+  const autoRotateKey =
+    rotateKeyRaw === "true" || rotateKeyRaw === "1" || rotateKeyRaw === "yes";
+
+  const retryCheckRaw = getSetting(runtime, "COLONY_SELF_CHECK_RETRY", "false")!.toLowerCase();
+  const selfCheckRetry =
+    retryCheckRaw === "true" || retryCheckRaw === "1" || retryCheckRaw === "yes";
+
+  const activityWebhookUrl = getSetting(runtime, "COLONY_ACTIVITY_WEBHOOK_URL", "")!.trim();
+  const activityWebhookSecret = getSetting(runtime, "COLONY_ACTIVITY_WEBHOOK_SECRET", "")!.trim();
+
   return {
     apiKey,
     defaultColony,
@@ -305,5 +344,13 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     scorerModelType,
     registerSignalHandlers,
     logFormat,
+    retryQueueEnabled,
+    retryQueueMaxAttempts,
+    retryQueueMaxAgeMs,
+    engageReactionMode,
+    autoRotateKey,
+    selfCheckRetry,
+    activityWebhookUrl,
+    activityWebhookSecret,
   };
 }
