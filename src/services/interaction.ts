@@ -263,6 +263,20 @@ export class ColonyInteractionClient {
       createdAt: latest.created_at,
       threadMessages,
     });
+
+    // v0.20.0: mark the conversation read server-side so the DM-unread
+    // counter stays in sync with what the agent has actually
+    // processed. Best-effort — a failure here shouldn't undo the
+    // successful dispatch. Requires @thecolony/sdk ^0.2.0.
+    try {
+      await (this.service.client as unknown as {
+        markConversationRead: (u: string) => Promise<unknown>;
+      }).markConversationRead(username);
+    } catch (err) {
+      logger.debug(
+        `COLONY_INTERACTION: markConversationRead(@${username}) failed (non-fatal): ${String(err)}`,
+      );
+    }
   }
 
   private agentUsername(): string | undefined {

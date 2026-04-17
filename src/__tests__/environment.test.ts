@@ -91,6 +91,9 @@ describe("loadColonyConfig", () => {
       operatorUsername: "",
       operatorPrefix: "!",
       dmContextMessages: 0,
+      engageUseRising: false,
+      engageTrendingBoost: false,
+      engageTrendingRefreshMs: 15 * 60_000,
     });
   });
 

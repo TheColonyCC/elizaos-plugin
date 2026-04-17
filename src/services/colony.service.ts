@@ -608,6 +608,9 @@ export class ColonyService extends Service {
         approvalRequired: service.colonyConfig.postApprovalRequired,
         draftQueue: service.draftQueue ?? undefined,
         lengthTarget: service.colonyConfig.engageLengthTarget,
+        useRising: service.colonyConfig.engageUseRising,
+        trendingBoost: service.colonyConfig.engageTrendingBoost,
+        trendingRefreshMs: service.colonyConfig.engageTrendingRefreshMs,
       });
       await service.engagementClient.start();
     } else {

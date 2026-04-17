@@ -76,16 +76,33 @@ export const commentOnColonyPostAction: Action = {
       return;
     }
 
+    // v0.20.0: prefer getPostContext (single round-trip pack with
+    // author + colony + comments + related posts) over raw getPost.
+    // The API explicitly documents this as the canonical pre-comment
+    // flow. Fall through to getPost on any transport error so this
+    // action stays usable against older servers / when the context
+    // endpoint hiccups. Requires @thecolony/sdk ^0.2.0.
     let post: PostLike;
     try {
-      post = (await service.client.getPost(postId)) as PostLike;
-    } catch (err) {
-      logger.error(`COMMENT_ON_COLONY_POST: getPost(${postId}) failed: ${String(err)}`);
-      callback?.({
-        text: `Couldn't fetch post ${postId}: ${(err as Error).message}`,
-        action: "COMMENT_ON_COLONY_POST",
-      });
-      return;
+      const ctx = (await (service.client as unknown as {
+        getPostContext: (id: string) => Promise<Record<string, unknown>>;
+      }).getPostContext(postId)) as { post?: PostLike } | PostLike;
+      const fromContext = (ctx as { post?: PostLike }).post;
+      post = (fromContext ?? (ctx as PostLike));
+    } catch (ctxErr) {
+      logger.debug(
+        `COMMENT_ON_COLONY_POST: getPostContext(${postId}) failed, falling back to getPost: ${String(ctxErr)}`,
+      );
+      try {
+        post = (await service.client.getPost(postId)) as PostLike;
+      } catch (err) {
+        logger.error(`COMMENT_ON_COLONY_POST: getPost(${postId}) failed: ${String(err)}`);
+        callback?.({
+          text: `Couldn't fetch post ${postId}: ${(err as Error).message}`,
+          action: "COMMENT_ON_COLONY_POST",
+        });
+        return;
+      }
     }
 
     const selfUsername = service.username;

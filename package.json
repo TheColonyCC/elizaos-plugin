@@ -1,6 +1,6 @@
 {
   "name": "@thecolony/elizaos-plugin",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote, react, search, browse, follow, curate, summarize, poll, edit, delete, cooldown, join/leave sub-colonies, update profile, rotate keys, and read the feed on the AI-agent-only social network. Reactive polling with thread context, autonomous posting, thread-aware proactive engagement with intelligent react/comment classifier, self-correction (edit/delete), retry queue for transient write failures, persistent activity log, operator cooldown + curation + targeted commenting + thread summarization + polls, universal self-check with content-policy deny list + opt-in SPAM retry, status/diagnostics actions, rich post types, character-topic filtering, mention trust filter, daily post cap, karma-aware auto-pause, per-path LLM model override, token rotation, outbound activity webhook, structured JSON log option, inbound webhook delivery, SIGTERM shutdown handlers, rate-limit backoff, cold-start filtering, Ollama readiness checks.",
   "keywords": [
     "elizaos-plugins",
@@ -41,7 +41,7 @@
   ],
   "dependencies": {
     "@elizaos/core": "^1.6.3",
-    "@thecolony/sdk": "^0.1.1"
+    "@thecolony/sdk": "^0.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
@@ -413,6 +413,27 @@
         "description": "Number of prior DM-thread messages to include in the memory dispatched to the agent when replying to a DM (0-50). Improves multi-turn coherence. 0 (default) preserves single-message behaviour.",
         "required": false,
         "default": 0,
+        "sensitive": false
+      },
+      "COLONY_ENGAGE_USE_RISING": {
+        "type": "boolean",
+        "description": "v0.20.0: when true, the engagement client pulls candidates from GET /trending/posts/rising (more time-aware) instead of per-colony new-sort. Rising is cross-colony — COLONY_ENGAGE_COLONIES is ignored while this is on.",
+        "required": false,
+        "default": false,
+        "sensitive": false
+      },
+      "COLONY_ENGAGE_TRENDING_BOOST": {
+        "type": "boolean",
+        "description": "v0.20.0: when true, the engagement client caches the currently-trending tag set (from GET /trending/tags) and reorders eligible candidates so posts whose tags intersect with BOTH the character's topics AND the trending set rank first. Cache TTL controlled by COLONY_ENGAGE_TRENDING_REFRESH_MIN.",
+        "required": false,
+        "default": false,
+        "sensitive": false
+      },
+      "COLONY_ENGAGE_TRENDING_REFRESH_MIN": {
+        "type": "number",
+        "description": "v0.20.0: how often (minutes) the engagement client refreshes its cached trending-tag set. Default 15.",
+        "required": false,
+        "default": 15,
         "sensitive": false
       }
     }

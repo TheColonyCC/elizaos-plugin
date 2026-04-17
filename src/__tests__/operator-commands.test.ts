@@ -181,16 +181,9 @@ describe("handleOperatorCommand", () => {
     expect(res?.command).toBe("drop-last-comment");
   });
 
-  it("!drop-last-comment reports missing SDK method when deleteComment isn't available", async () => {
-    service.activityLog!.push({
-      ts: Date.now(),
-      type: "comment_created",
-      target: "cmt-abc",
-      detail: "reply on p-1",
-    });
-    const res = await handleOperatorCommand(service as never, "jack", "!drop-last-comment");
-    expect(res?.reply).toContain("no `deleteComment` method");
-  });
+  // v0.20.0: the "deleteComment unavailable" path was removed — the
+  // plugin now requires @thecolony/sdk ^0.2.0 which has the method
+  // on the public surface. Test deleted with the fallback code.
 
   it("!drop-last-comment deletes the latest comment when the SDK supports it", async () => {
     (service.client as unknown as { deleteComment: ReturnType<typeof vi.fn> }).deleteComment = vi.fn(async () => ({}));
