@@ -68,6 +68,14 @@ export async function handleOperatorCommand(
     case "drop-last-comment":
     case "drop-last":
       return await handleDropLastComment(service);
+    case "archive":
+      return await handleConversationState(service, args, "archive");
+    case "unarchive":
+      return await handleConversationState(service, args, "unarchive");
+    case "mute":
+      return await handleConversationState(service, args, "mute");
+    case "unmute":
+      return await handleConversationState(service, args, "unmute");
     case "help":
       return handleHelp(service);
     default:
@@ -162,18 +170,11 @@ async function handleDropLastComment(
     };
   }
   const commentId = recent.target;
-  const client = service.client as unknown as {
-    deleteComment?: (id: string) => Promise<unknown>;
-  };
-  if (typeof client.deleteComment !== "function") {
-    return {
-      command: "drop-last-comment",
-      reply:
-        "SDK client has no `deleteComment` method — upgrade @thecolony/sdk or delete via the web UI.",
-    };
-  }
   try {
-    await client.deleteComment(commentId);
+    // v0.20.0: SDK-native deleteComment (requires @thecolony/sdk ^0.2.0).
+    // Replaced the v0.19.0 as-unknown-as shim now that the SDK exposes
+    // the method on the public surface.
+    await service.client.deleteComment(commentId);
     return {
       command: "drop-last-comment",
       reply: `Deleted comment ${commentId.slice(0, 8)}… (${recent.detail ?? "no detail"})`,
@@ -192,13 +193,70 @@ function handleHelp(service: ColonyService): OperatorCommandResult {
     command: "help",
     reply: [
       `Operator commands (bypass the LLM, only from @${service.colonyConfig.operatorUsername}):`,
-      `  ${p}pause <dur>   — pause autonomy (30m, 2h, 60s, or bare minutes)`,
-      `  ${p}resume         — clear any active pause`,
-      `  ${p}status         — compact status snapshot`,
-      `  ${p}drop-last      — delete the most recent comment this session posted`,
-      `  ${p}help           — this message`,
+      `  ${p}pause <dur>      — pause autonomy (30m, 2h, 60s, or bare minutes)`,
+      `  ${p}resume            — clear any active pause`,
+      `  ${p}status            — compact status snapshot`,
+      `  ${p}drop-last         — delete the most recent comment this session posted`,
+      `  ${p}archive @user     — archive the DM thread with @user`,
+      `  ${p}unarchive @user   — restore a previously archived thread`,
+      `  ${p}mute @user        — mute DM notifications from @user`,
+      `  ${p}unmute @user      — restore DM notifications from @user`,
+      `  ${p}help              — this message`,
     ].join("\n"),
   };
+}
+
+type ConversationStateCommand = "archive" | "unarchive" | "mute" | "unmute";
+
+/**
+ * v0.20.0: DM-thread state operator commands.
+ *
+ * Each wraps the corresponding SDK method on `service.client`:
+ *   - archive:   client.archiveConversation(username)
+ *   - unarchive: client.unarchiveConversation(username)
+ *   - mute:      client.muteConversation(username)
+ *   - unmute:    client.unmuteConversation(username)
+ *
+ * Accepts `@alice`, `alice`, or `username: alice` as arg[0]. The @ is
+ * stripped for the SDK call. No-op if the username is empty — returns
+ * a usage message instead of hitting the API with a blank path.
+ */
+async function handleConversationState(
+  service: ColonyService,
+  args: string[],
+  action: ConversationStateCommand,
+): Promise<OperatorCommandResult> {
+  const raw = args[0];
+  const username = raw?.replace(/^@/, "").trim();
+  if (!username) {
+    const p = service.colonyConfig.operatorPrefix;
+    return {
+      command: action,
+      reply: `Username required (e.g. \`${p}${action} @alice\` or \`${p}${action} alice\`).`,
+    };
+  }
+  const client = service.client as unknown as {
+    archiveConversation: (u: string) => Promise<unknown>;
+    unarchiveConversation: (u: string) => Promise<unknown>;
+    muteConversation: (u: string) => Promise<unknown>;
+    unmuteConversation: (u: string) => Promise<unknown>;
+  };
+  try {
+    if (action === "archive") await client.archiveConversation(username);
+    else if (action === "unarchive") await client.unarchiveConversation(username);
+    else if (action === "mute") await client.muteConversation(username);
+    else await client.unmuteConversation(username);
+    const verb = { archive: "Archived", unarchive: "Unarchived", mute: "Muted", unmute: "Unmuted" }[action];
+    return {
+      command: action,
+      reply: `${verb} DM thread with @${username}.`,
+    };
+  } catch (err) {
+    return {
+      command: action,
+      reply: `Failed to ${action} @${username}: ${(err as Error).message}`,
+    };
+  }
 }
 
 /**

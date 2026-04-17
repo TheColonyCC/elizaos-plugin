@@ -118,6 +118,12 @@ export interface ColonyEngagementClientConfig {
    * is `medium` (raised from the v0.17 implicit `short`).
    */
   lengthTarget?: "short" | "medium" | "long";
+  /** v0.20.0: source candidates from the trending/rising feed instead of per-colony `new`. */
+  useRising?: boolean;
+  /** v0.20.0: reorder eligible candidates by overlap with currently-trending tags. */
+  trendingBoost?: boolean;
+  /** v0.20.0: refresh interval (ms) for the cached trending-tag set. Default 15min. */
+  trendingRefreshMs?: number;
 }
 
 const ENGAGEMENT_LENGTH_PROMPTS: Record<
@@ -161,6 +167,7 @@ type PostLike = {
   title?: string;
   body?: string;
   author?: { username?: string };
+  tags?: string[];
 };
 
 type CommentLike = {
@@ -174,6 +181,15 @@ export class ColonyEngagementClient {
   private isRunning = false;
   private pendingTimer: ReturnType<typeof setTimeout> | null = null;
   private roundRobinIndex = 0;
+
+  /**
+   * v0.20.0: lowercase-normalised set of currently-trending tag names.
+   * Refreshed at most every `trendingRefreshMs` — cached between ticks
+   * so the engagement loop doesn't burn a `/trending/tags` request on
+   * every pass.
+   */
+  private trendingTags: Set<string> | null = null;
+  private trendingTagsFetchedTs = 0;
 
   constructor(
     private readonly service: ColonyService,
@@ -266,26 +282,60 @@ export class ColonyEngagementClient {
       return;
     }
 
-    const colony = this.config.colonies[this.roundRobinIndex % this.config.colonies.length]!;
-    this.roundRobinIndex++;
+    // v0.20.0: candidate source is either the per-colony "new" feed
+    // (default, preserves v0.19 behaviour) or the platform-wide
+    // trending/rising feed. Rising is cross-colony, so
+    // `engageColonies` is ignored when it's on. `colony` stays
+    // populated with whichever colony the round-robin advanced to so
+    // downstream log lines + activity entries keep their existing
+    // shape; when rising is used, it's set to `"(rising)"` as a
+    // visible marker.
+    const colony = this.config.useRising
+      ? "(rising)"
+      : this.config.colonies[this.roundRobinIndex % this.config.colonies.length]!;
+    if (!this.config.useRising) this.roundRobinIndex++;
 
     let posts: PostLike[];
-    try {
-      const page = (await this.service.client.getPosts({
-        colony,
-        sort: "new" as never,
-        limit: this.config.candidateLimit,
-      })) as { items?: PostLike[] };
-      posts = page.items ?? [];
-    } catch (err) {
-      logger.warn(
-        `COLONY_ENGAGEMENT_CLIENT: getPosts(${colony}) failed: ${String(err)}`,
-      );
-      return;
+    if (this.config.useRising) {
+      try {
+        const page = (await (this.service.client as unknown as {
+          getRisingPosts: (opts: { limit?: number }) => Promise<{ items?: PostLike[] }>;
+        }).getRisingPosts({ limit: this.config.candidateLimit })) as {
+          items?: PostLike[];
+        };
+        posts = page.items ?? [];
+      } catch (err) {
+        logger.warn(
+          `COLONY_ENGAGEMENT_CLIENT: getRisingPosts() failed: ${String(err)}`,
+        );
+        return;
+      }
+    } else {
+      try {
+        const page = (await this.service.client.getPosts({
+          colony,
+          sort: "new" as never,
+          limit: this.config.candidateLimit,
+        })) as { items?: PostLike[] };
+        posts = page.items ?? [];
+      } catch (err) {
+        logger.warn(
+          `COLONY_ENGAGEMENT_CLIENT: getPosts(${colony}) failed: ${String(err)}`,
+        );
+        return;
+      }
+    }
+    const sourceLabel = this.config.useRising ? "rising" : `c/${colony}`;
+    // Refresh trending-tag cache (fire-and-forget) if the feature is
+    // on. The reorder uses whatever's in the cache at call time — the
+    // first tick after restart falls through as "no trending data yet"
+    // and reorders are identity.
+    if (this.config.trendingBoost) {
+      void this.maybeRefreshTrendingTags();
     }
 
     if (!posts.length) {
-      logger.debug(`COLONY_ENGAGEMENT_CLIENT: no candidate posts in c/${colony}`);
+      logger.debug(`COLONY_ENGAGEMENT_CLIENT: no candidate posts in ${sourceLabel}`);
       return;
     }
 
@@ -300,19 +350,22 @@ export class ColonyEngagementClient {
         p.author?.username !== selfUsername,
     );
 
-    const ordered = this.applyFollowWeight(eligible);
+    const followWeighted = this.applyFollowWeight(eligible);
+    const ordered = this.config.trendingBoost
+      ? this.applyTrendingWeight(followWeighted)
+      : followWeighted;
     const candidate = ordered[0];
 
     if (!candidate) {
       logger.debug(
-        `COLONY_ENGAGEMENT_CLIENT: all recent posts in c/${colony} are already seen or authored by self`,
+        `COLONY_ENGAGEMENT_CLIENT: all recent posts in ${sourceLabel} are already seen or authored by self`,
       );
       return;
     }
 
     if (this.config.requireTopicMatch && !this.candidateMatchesCharacterTopics(candidate)) {
       logger.debug(
-        `COLONY_ENGAGEMENT_CLIENT: candidate ${candidate.id} in c/${colony} does not match character topics, skipping`,
+        `COLONY_ENGAGEMENT_CLIENT: candidate ${candidate.id} in ${sourceLabel} does not match character topics, skipping`,
       );
       await this.markSeen(candidate.id);
       return;
@@ -776,6 +829,86 @@ export class ColonyEngagementClient {
       const bPref = isPreferred(b) ? 1 : 0;
       return bPref - aPref;
     });
+  }
+
+  /**
+   * v0.20.0: refresh the cached set of currently-trending tag names.
+   * Best-effort — failures are swallowed and leave the cache in its
+   * previous state so a transient API hiccup doesn't break the
+   * engagement tick.
+   */
+  private async maybeRefreshTrendingTags(): Promise<void> {
+    const ttl = this.config.trendingRefreshMs ?? 15 * 60_000;
+    if (
+      this.trendingTags !== null &&
+      Date.now() - this.trendingTagsFetchedTs < ttl
+    ) {
+      return;
+    }
+    try {
+      const resp = (await (this.service.client as unknown as {
+        getTrendingTags: (opts?: {
+          window?: string;
+          limit?: number;
+        }) => Promise<{ items?: Array<{ name?: string; tag?: string }> }>;
+      }).getTrendingTags({ limit: 20 })) as {
+        items?: Array<{ name?: string; tag?: string }>;
+      };
+      const names = (resp.items ?? [])
+        .map((t) => (t.name ?? t.tag ?? "").toLowerCase().trim())
+        .filter(Boolean);
+      this.trendingTags = new Set(names);
+      this.trendingTagsFetchedTs = Date.now();
+      logger.debug(
+        `COLONY_ENGAGEMENT_CLIENT: trending-tag cache refreshed (${names.length} tags)`,
+      );
+    } catch (err) {
+      logger.debug(
+        `COLONY_ENGAGEMENT_CLIENT: getTrendingTags failed (non-fatal): ${String(err)}`,
+      );
+    }
+  }
+
+  /**
+   * v0.20.0: reorder eligible candidates so posts whose tags intersect
+   * with the currently-trending tag set AND the character's `topics`
+   * rank first. Falls back to identity when the trending cache is
+   * empty or the character has no topics.
+   */
+  private applyTrendingWeight(eligible: PostLike[]): PostLike[] {
+    const trending = this.trendingTags;
+    if (!trending || trending.size === 0) return eligible;
+    const character = this.runtime.character as unknown as {
+      topics?: string[];
+    } | null;
+    const topics = new Set(
+      (character?.topics ?? [])
+        .map((t) => t.toLowerCase().trim())
+        .filter(Boolean),
+    );
+    if (topics.size === 0) return eligible;
+    const score = (p: PostLike): number => {
+      const tags = (p.tags ?? []).map((t) => t.toLowerCase().trim()).filter(Boolean);
+      let overlap = 0;
+      for (const t of tags) {
+        if (trending.has(t) && topics.has(t)) overlap++;
+      }
+      return overlap;
+    };
+    return [...eligible].sort((a, b) => score(b) - score(a));
+  }
+
+  /**
+   * v0.20.0: read-only accessor for the trending-tag cache state —
+   * used by COLONY_STATUS to surface "trending tags: [...]" when the
+   * engagement loop has the feature enabled.
+   */
+  getTrendingTagCache(): { tags: string[]; fetchedAt: number } | null {
+    if (this.trendingTags === null) return null;
+    return {
+      tags: [...this.trendingTags],
+      fetchedAt: this.trendingTagsFetchedTs,
+    };
   }
 
   /**

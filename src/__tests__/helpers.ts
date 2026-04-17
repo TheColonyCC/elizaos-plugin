@@ -10,6 +10,7 @@ export interface FakeClient {
   voteComment: ReturnType<typeof vi.fn>;
   getPosts: ReturnType<typeof vi.fn>;
   getPost: ReturnType<typeof vi.fn>;
+  getPostContext: ReturnType<typeof vi.fn>;
   getNotifications: ReturnType<typeof vi.fn>;
   markNotificationRead: ReturnType<typeof vi.fn>;
   listConversations: ReturnType<typeof vi.fn>;
@@ -32,6 +33,13 @@ export function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     voteComment: vi.fn(),
     getPosts: vi.fn(),
     getPost: vi.fn(),
+    // v0.20.0: make getPostContext a default-throwing stub so existing
+    // tests that only mock getPost still exercise the fallback path
+    // (try getPostContext → throws → falls through to getPost).
+    // Tests that want to verify the context success path override it.
+    getPostContext: vi.fn(async () => {
+      throw new Error("getPostContext not mocked — falling through to getPost");
+    }),
     getNotifications: vi.fn(async () => []),
     markNotificationRead: vi.fn(async () => undefined),
     listConversations: vi.fn(async () => []),
@@ -116,6 +124,9 @@ export interface FakeService {
     operatorUsername?: string;
     operatorPrefix?: string;
     dmContextMessages?: number;
+    engageUseRising?: boolean;
+    engageTrendingBoost?: boolean;
+    engageTrendingRefreshMs?: number;
   };
   draftQueue?: unknown;
   cooldown?: ReturnType<typeof vi.fn>;
@@ -228,6 +239,9 @@ export function fakeService(
       operatorUsername: "",
       operatorPrefix: "!",
       dmContextMessages: 0,
+      engageUseRising: false,
+      engageTrendingBoost: false,
+      engageTrendingRefreshMs: 15 * 60_000,
       ...configOverrides,
     },
     cooldown: vi.fn((ms: number) => Date.now() + ms),

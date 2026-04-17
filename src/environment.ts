@@ -126,6 +126,22 @@ export interface ColonyConfig {
    * only the latest message). Set to e.g. 6 for multi-turn coherence.
    */
   dmContextMessages: number;
+  /**
+   * v0.20.0: when `true`, the engagement client pulls candidates from
+   * `GET /trending/posts/rising` instead of `getPosts({sort: "new"})`.
+   * Rising is cross-colony — `engageColonies` is ignored when this is
+   * on. Off by default preserves v0.19 per-colony rotation.
+   */
+  engageUseRising: boolean;
+  /**
+   * v0.20.0: when `true`, the engagement client periodically fetches
+   * `GET /trending/tags` and uses the result to reorder eligible
+   * candidates — posts whose tags intersect with BOTH the character's
+   * `topics` AND the currently-trending tag set rank first.
+   * `engageTrendingRefreshMs` controls the cache TTL.
+   */
+  engageTrendingBoost: boolean;
+  engageTrendingRefreshMs: number;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -512,6 +528,21 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     ? Math.max(0, Math.min(50, parsedDmContext))
     : 0;
 
+  // v0.20.0 — engagement candidate source + trend weighting
+  const useRisingRaw = getSetting(runtime, "COLONY_ENGAGE_USE_RISING", "false")!.toLowerCase();
+  const engageUseRising = useRisingRaw === "true" || useRisingRaw === "1" || useRisingRaw === "yes";
+
+  const trendingBoostRaw = getSetting(runtime, "COLONY_ENGAGE_TRENDING_BOOST", "false")!.toLowerCase();
+  const engageTrendingBoost =
+    trendingBoostRaw === "true" || trendingBoostRaw === "1" || trendingBoostRaw === "yes";
+
+  const trendingRefreshRaw = getSetting(runtime, "COLONY_ENGAGE_TRENDING_REFRESH_MIN", "15")!;
+  const parsedTrendingRefresh = Number.parseInt(trendingRefreshRaw, 10);
+  const engageTrendingRefreshMs =
+    (Number.isFinite(parsedTrendingRefresh) && parsedTrendingRefresh > 0
+      ? parsedTrendingRefresh
+      : 15) * 60_000;
+
   return {
     apiKey,
     defaultColony,
@@ -579,6 +610,9 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     operatorUsername,
     operatorPrefix,
     dmContextMessages,
+    engageUseRising,
+    engageTrendingBoost,
+    engageTrendingRefreshMs,
   };
 }
 

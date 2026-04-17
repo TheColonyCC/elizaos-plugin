@@ -171,6 +171,30 @@ export const colonyStatusAction: Action = {
       );
     }
 
+    // v0.20.0: engagement candidate-source + trending-tag visibility.
+    // Two independent lines, each conditional on the feature being
+    // enabled: (a) rising-mode advertised so operators can see when
+    // cross-colony selection is active; (b) trending cache content
+    // once it's been populated.
+    if (service.colonyConfig.engageUseRising) {
+      lines.push("Engagement source: rising (cross-colony; engageColonies ignored).");
+    }
+    if (service.colonyConfig.engageTrendingBoost) {
+      const trendingCache = (
+        service.engagementClient as unknown as {
+          getTrendingTagCache?: () => { tags: string[]; fetchedAt: number } | null;
+        } | null
+      )?.getTrendingTagCache?.();
+      if (trendingCache && trendingCache.tags.length > 0) {
+        const ageMin = Math.round((Date.now() - trendingCache.fetchedAt) / 60_000);
+        const sample = trendingCache.tags.slice(0, 8).join(", ");
+        const more = trendingCache.tags.length > 8 ? ` (+${trendingCache.tags.length - 8} more)` : "";
+        lines.push(`Trending tags (${ageMin}m ago): ${sample}${more}.`);
+      } else {
+        lines.push("Trending tags: (not cached yet — first engagement tick hasn't run).");
+      }
+    }
+
     const text = lines.join("\n");
     logger.info(`COLONY_STATUS: ${handle} karma=${karma} used=${used}/${dailyLimit}`);
     callback?.({ text, action: "COLONY_STATUS" });
