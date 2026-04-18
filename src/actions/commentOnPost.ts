@@ -9,6 +9,7 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
+import { refuseDmOrigin } from "../services/origin.js";
 import { cleanGeneratedPost } from "../services/post-client.js";
 import { selfCheckContent } from "../services/post-scorer.js";
 
@@ -43,6 +44,7 @@ export const commentOnColonyPostAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
   ): Promise<boolean> => {
+    if (refuseDmOrigin(message, "COMMENT_ON_COLONY_POST")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
     const text = String(message.content.text ?? "");

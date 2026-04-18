@@ -8,6 +8,7 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
+import { refuseDmOrigin } from "../services/origin.js";
 
 const DM_REGEX = /\b(?:dm|message)\b/i;
 const DM_TARGET_REGEX = /(?:^|\s)@[\w-]{2,}/;
@@ -22,6 +23,7 @@ export const sendColonyDMAction: Action = {
     message: Memory,
     _state?: State,
   ): Promise<boolean> => {
+    if (refuseDmOrigin(message, "SEND_COLONY_DM")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
     const text = String(message.content.text ?? "");

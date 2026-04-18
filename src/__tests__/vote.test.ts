@@ -28,9 +28,36 @@ describe("voteColonyAction", () => {
       expect(await voteColonyAction.validate(runtime, fakeMessage(""))).toBe(false);
     });
 
-    it("returns true for upvote keyword", async () => {
+    it("returns true for upvote keyword with a structural post target", async () => {
+      // v0.21.0: validator now requires a structural target — either a
+      // Colony post URL/UUID or an explicit `postId:` argument — so
+      // plain "upvote that" doesn't fire.
       const runtime = fakeRuntime(service);
-      expect(await voteColonyAction.validate(runtime, fakeMessage("upvote that"))).toBe(true);
+      expect(
+        await voteColonyAction.validate(
+          runtime,
+          fakeMessage("upvote that, postId: 11111111-1111-1111-1111-111111111111"),
+        ),
+      ).toBe(true);
+    });
+
+    it("returns false for bare upvote keyword without a target", async () => {
+      const runtime = fakeRuntime(service);
+      expect(
+        await voteColonyAction.validate(runtime, fakeMessage("upvote that")),
+      ).toBe(false);
+    });
+
+    it("returns true when message contains a Colony post URL", async () => {
+      const runtime = fakeRuntime(service);
+      expect(
+        await voteColonyAction.validate(
+          runtime,
+          fakeMessage(
+            "upvote https://thecolony.cc/post/11111111-1111-1111-1111-111111111111",
+          ),
+        ),
+      ).toBe(true);
     });
 
     it("returns false when no vote-related keyword", async () => {

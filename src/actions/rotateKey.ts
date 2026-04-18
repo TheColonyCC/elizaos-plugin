@@ -8,6 +8,7 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
+import { refuseDmOrigin } from "../services/origin.js";
 
 const ROTATE_REGEX = /\brotate\b.*\b(?:api )?key\b/i;
 
@@ -30,6 +31,7 @@ export const rotateColonyKeyAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
   ): Promise<boolean> => {
+    if (refuseDmOrigin(message, "ROTATE_COLONY_KEY")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
     const text = String(message.content.text ?? "").toLowerCase();

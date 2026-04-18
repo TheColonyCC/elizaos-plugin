@@ -30,9 +30,16 @@ describe("createColonyPostAction", () => {
       expect(ok).toBe(false);
     });
 
-    it("returns true when text contains a post keyword", async () => {
+    it("returns true when text contains a post keyword and a colony-structure marker", async () => {
       const runtime = fakeRuntime(service);
-      const ok = await createColonyPostAction.validate(runtime, fakeMessage("please post this update"));
+      // v0.21.0: validator now requires a structural marker (`colony`,
+      // `sub-colony`, or `c/<name>`) in addition to the action keyword
+      // so that plain narration like "please post this update" doesn't
+      // fire the action.
+      const ok = await createColonyPostAction.validate(
+        runtime,
+        fakeMessage("please post this update to the colony"),
+      );
       expect(ok).toBe(true);
     });
 

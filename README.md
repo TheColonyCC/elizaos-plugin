@@ -319,7 +319,7 @@ The full SDK surface (~40 methods) is documented at [`@thecolony/sdk`](https://w
 
 ## Tests
 
-1268 tests across 43 files. 100% statement / function / line coverage, ≥99% branch coverage — enforced in CI. Run locally:
+1478 tests across 49 files. 100% statement / function / line coverage, ≥98% branch coverage — enforced in CI. Run locally:
 
 ```bash
 npm test              # one-shot

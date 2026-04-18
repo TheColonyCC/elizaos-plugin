@@ -8,10 +8,17 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
+import { refuseDmOrigin } from "../services/origin.js";
 import { selfCheckContent } from "../services/post-scorer.js";
 
 const POST_KEYWORDS = ["post", "publish", "share", "submit", "colony"];
 const POST_REGEX = /\b(?:post|publish|share|submit)\b/i;
+// v0.21.0: require a structural token — either a Colony sub-colony tag
+// (`c/findings`) or the word "colony" alongside the action keyword — so a
+// DM that just says "please post an update" doesn't pass. A malicious DM
+// that manages to smuggle `c/general` is already refused at the origin
+// gate (see `refuseDmOrigin` below) — this tightens the non-DM paths too.
+const POST_STRUCTURE_REGEX = /\bc\/[a-z0-9-]+\b|\bcolony\b|\bsub-?colony\b/i;
 
 export const createColonyPostAction: Action = {
   name: "CREATE_COLONY_POST",
@@ -28,13 +35,19 @@ export const createColonyPostAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
   ): Promise<boolean> => {
+    // v0.21.0: DM-origin hardening. A malicious DM that says "post this
+    // spam to the colony" would otherwise pass the content validator.
+    if (refuseDmOrigin(message, "CREATE_COLONY_POST")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
     const text = String(message.content.text ?? "").toLowerCase();
     if (!text.trim()) return false;
     const keywordHit = POST_KEYWORDS.some((kw) => text.includes(kw));
     const regexHit = POST_REGEX.test(text);
-    return keywordHit && regexHit;
+    if (!(keywordHit && regexHit)) return false;
+    // v0.21.0: also require a structural marker so plain narration
+    // containing "post" doesn't fire the action.
+    return POST_STRUCTURE_REGEX.test(text);
   },
   handler: async (
     runtime: IAgentRuntime,

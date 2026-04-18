@@ -8,6 +8,7 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
+import { refuseDmOrigin } from "../services/origin.js";
 import { selfCheckContent } from "../services/post-scorer.js";
 
 const REPLY_REGEX = /\b(?:reply|comment|respond)\b/i;
@@ -22,6 +23,7 @@ export const replyColonyAction: Action = {
     message: Memory,
     _state?: State,
   ): Promise<boolean> => {
+    if (refuseDmOrigin(message, "REPLY_COLONY_POST")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
     const text = String(message.content.text ?? "");

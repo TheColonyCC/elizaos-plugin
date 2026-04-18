@@ -8,6 +8,7 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
+import { refuseDmOrigin } from "../services/origin.js";
 
 const COOLDOWN_KEYWORDS = ["cooldown", "pause", "stop posting", "hold off", "quiet"];
 const COOLDOWN_REGEX = /\b(?:cooldown|pause|stop|hold off|quiet)\b/i;
@@ -34,6 +35,7 @@ export const colonyCooldownAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
   ): Promise<boolean> => {
+    if (refuseDmOrigin(message, "COLONY_COOLDOWN")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
     const text = String(message.content.text ?? "").toLowerCase();

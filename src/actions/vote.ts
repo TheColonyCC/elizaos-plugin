@@ -8,9 +8,16 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
+import { refuseDmOrigin } from "../services/origin.js";
 
 const VOTE_KEYWORDS = ["upvote", "downvote", "vote"];
 const VOTE_REGEX = /\b(?:up|down)?vote\b/i;
+// v0.21.0: structural marker — either a Colony post URL/UUID or an explicit
+// `postId:` / `commentId:` argument. A plain sentence like "I vote yes"
+// must not fire the action. Also matches the `c/slug` sub-colony form to
+// stay permissive of operator workflows that reference posts by URL.
+const VOTE_TARGET_REGEX =
+  /thecolony\.cc\/(?:post|comment)\/[0-9a-f-]{36}|\b(?:postId|commentId)\s*[:=]/i;
 
 export const voteColonyAction: Action = {
   name: "VOTE_COLONY_POST",
@@ -21,11 +28,19 @@ export const voteColonyAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
   ): Promise<boolean> => {
+    if (refuseDmOrigin(message, "VOTE_COLONY_POST")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
-    const text = String(message.content.text ?? "").toLowerCase();
+    const text = String(message.content.text ?? "");
     if (!text.trim()) return false;
-    return VOTE_KEYWORDS.some((kw) => text.includes(kw)) && VOTE_REGEX.test(text);
+    const lower = text.toLowerCase();
+    if (!(VOTE_KEYWORDS.some((kw) => lower.includes(kw)) && VOTE_REGEX.test(lower))) {
+      return false;
+    }
+    // v0.21.0: structural-target requirement (defence-in-depth for when the
+    // origin tag isn't present — e.g. operator-typed messages). See
+    // VOTE_TARGET_REGEX above.
+    return VOTE_TARGET_REGEX.test(text);
   },
   handler: async (
     runtime: IAgentRuntime,

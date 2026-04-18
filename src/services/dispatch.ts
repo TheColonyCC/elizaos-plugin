@@ -25,6 +25,7 @@ import {
 import { isColonyActionName } from "./action-names.js";
 import type { ColonyService } from "./colony.service.js";
 import { validateGeneratedOutput } from "./output-validator.js";
+import type { ColonyOrigin } from "./origin.js";
 
 /**
  * Produces a stable runtime-scoped UUID from a base string by delegating to
@@ -183,6 +184,9 @@ export async function dispatchPostMention(
         .join("\n\n"),
       source: "colony",
       url: `https://thecolony.cc/post/${params.postId}`,
+      // v0.21.0: tag origin so action validators can distinguish a
+      // post-mention from a DM-injection attempt. See services/origin.ts.
+      colonyOrigin: "post_mention" satisfies ColonyOrigin as never,
     },
     createdAt: params.createdAt
       ? Date.parse(params.createdAt) || Date.now()
@@ -367,6 +371,10 @@ export async function dispatchDirectMessage(
       text: dmText,
       source: "colony",
       channelType: "DM" as never,
+      // v0.21.0: tag origin as DM so action validators refuse mutating
+      // actions (create post, vote, delete, etc.) regardless of what the
+      // DM text says. See services/origin.ts for the allow-list policy.
+      colonyOrigin: "dm" satisfies ColonyOrigin as never,
     },
     createdAt: params.createdAt
       ? Date.parse(params.createdAt) || Date.now()

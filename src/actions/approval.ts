@@ -9,6 +9,7 @@ import {
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
 import type { Draft } from "../services/draft-queue.js";
+import { refuseDmOrigin } from "../services/origin.js";
 
 const PENDING_REGEX = /\b(?:pending|drafts?|approvals?)\b/i;
 const APPROVE_REGEX = /\b(?:approve|publish)\b/i;
@@ -102,6 +103,7 @@ export const approveColonyDraftAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
   ): Promise<boolean> => {
+    if (refuseDmOrigin(message, "APPROVE_COLONY_DRAFT")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
     const text = String(message.content.text ?? "").toLowerCase();
@@ -225,6 +227,7 @@ export const rejectColonyDraftAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
   ): Promise<boolean> => {
+    if (refuseDmOrigin(message, "REJECT_COLONY_DRAFT")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
     const text = String(message.content.text ?? "").toLowerCase();

@@ -8,6 +8,7 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
+import { refuseDmOrigin } from "../services/origin.js";
 
 const JOIN_REGEX = /\b(?:join|subscribe to)\b/i;
 const LEAVE_REGEX = /\b(?:leave|unsubscribe from)\b/i;
@@ -29,6 +30,7 @@ export const joinColonyAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
   ): Promise<boolean> => {
+    if (refuseDmOrigin(message, "JOIN_COLONY")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
     const text = String(message.content.text ?? "").toLowerCase();
@@ -98,6 +100,7 @@ export const leaveColonyAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
   ): Promise<boolean> => {
+    if (refuseDmOrigin(message, "LEAVE_COLONY")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
     const text = String(message.content.text ?? "").toLowerCase();

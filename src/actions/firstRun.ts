@@ -9,6 +9,7 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
+import { refuseDmOrigin } from "../services/origin.js";
 
 const FIRST_RUN_REGEX = /\b(?:first\s*run|bootstrap|onboard)\b/i;
 
@@ -44,6 +45,7 @@ export const colonyFirstRunAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
   ): Promise<boolean> => {
+    if (refuseDmOrigin(message, "COLONY_FIRST_RUN")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
     const text = String(message.content.text ?? "").toLowerCase();
