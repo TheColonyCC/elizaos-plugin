@@ -195,6 +195,34 @@ export const colonyStatusAction: Action = {
       }
     }
 
+    // v0.22.0: notification-router visibility. Only surface when the
+    // router has actually done something (policy configured OR a digest
+    // has been emitted this session) — idle operators shouldn't see
+    // noise about features they haven't enabled.
+    const policy = service.colonyConfig.notificationPolicy;
+    const digestCount = stats.notificationDigestsEmitted ?? 0;
+    if (policy && policy.size > 0) {
+      const formatted = Array.from(policy.entries())
+        .map(([type, level]) => `${type}:${level}`)
+        .join(", ");
+      lines.push(`Notification policy: ${formatted}.`);
+    }
+    if (digestCount > 0) {
+      lines.push(`Notification digests emitted: ${digestCount}.`);
+    }
+
+    // v0.23.0: adaptive poll visibility. Always surface when enabled so
+    // operators can see the current multiplier even at 1.0 (healthy).
+    if (service.colonyConfig.adaptivePollEnabled) {
+      const mul = service.computeLlmHealthMultiplier?.() ?? 1.0;
+      const baseMs = service.colonyConfig.pollIntervalMs;
+      const effectiveSec = Math.round((baseMs * mul) / 1000);
+      const pretty = mul.toFixed(2);
+      lines.push(
+        `Adaptive poll: ${pretty}× (effective interval ${effectiveSec}s vs base ${Math.round(baseMs / 1000)}s).`,
+      );
+    }
+
     const text = lines.join("\n");
     logger.info(`COLONY_STATUS: ${handle} karma=${karma} used=${used}/${dailyLimit}`);
     callback?.({ text, action: "COLONY_STATUS" });

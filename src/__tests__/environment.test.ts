@@ -95,6 +95,10 @@ describe("loadColonyConfig", () => {
       engageUseRising: false,
       engageTrendingBoost: false,
       engageTrendingRefreshMs: 15 * 60_000,
+      adaptivePollEnabled: false,
+      adaptivePollMaxMultiplier: 4.0,
+      adaptivePollWarnThreshold: 0.25,
+      dmMinKarma: 0,
     });
   });
 

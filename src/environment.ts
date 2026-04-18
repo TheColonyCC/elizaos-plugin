@@ -152,6 +152,44 @@ export interface ColonyConfig {
    */
   engageTrendingBoost: boolean;
   engageTrendingRefreshMs: number;
+  /**
+   * v0.23.0: when `true`, the interaction client's poll interval is
+   * multiplied by a graded factor derived from recent LLM-failure rate.
+   * Complements the v0.17 binary LLM-health pause — instead of going
+   * from 1× directly to paused, we can ramp the interval up gradually
+   * as failure rate climbs, slowing ingest pressure on a struggling
+   * Ollama without cutting the agent off entirely.
+   *
+   * Disabled by default (preserves v0.22 behaviour).
+   */
+  adaptivePollEnabled: boolean;
+  /**
+   * v0.23.0: cap on the poll-interval multiplier. At max the poll rate
+   * drops to `baseInterval × maxMultiplier`. Clamped to [1.0, 20.0] at
+   * parse time — 20× of a 2-minute interval = 40-minute poll, which is
+   * already "functionally paused" territory.
+   */
+  adaptivePollMaxMultiplier: number;
+  /**
+   * v0.23.0: failure-rate below which no adaptive slowdown applies
+   * (multiplier stays at 1.0). Above this, the multiplier scales
+   * linearly toward `adaptivePollMaxMultiplier` at rate=1.0. Clamped
+   * to [0, 0.99] at parse time. Default 0.25 = "25% of LLM calls in
+   * the v0.17 failure window must fail before the adaptive logic
+   * starts slowing the poll."
+   */
+  adaptivePollWarnThreshold: number;
+  /**
+   * v0.23.0: minimum sender-karma floor for DM-origin memories. When
+   * set (> 0), DMs whose sender has karma below this threshold are
+   * marked-read and dropped BEFORE dispatch through
+   * `messageService.handleMessage`, cutting off the remaining
+   * sockpuppet-style attack vector left open by v0.21's DM action
+   * guards (v0.21 blocks mutating actions; this blocks reply
+   * generation itself). Operator kill-switch commands are evaluated
+   * before this gate and unaffected. Default 0 = disabled.
+   */
+  dmMinKarma: number;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -561,6 +599,29 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
       ? parsedTrendingRefresh
       : 15) * 60_000;
 
+  // v0.23.0 — adaptive poll interval + DM karma gate
+  const adaptivePollRaw = getSetting(runtime, "COLONY_ADAPTIVE_POLL_ENABLED", "false")!.toLowerCase();
+  const adaptivePollEnabled =
+    adaptivePollRaw === "true" || adaptivePollRaw === "1" || adaptivePollRaw === "yes";
+
+  const adaptiveMaxRaw = getSetting(runtime, "COLONY_ADAPTIVE_POLL_MAX_MULTIPLIER", "4.0")!;
+  const parsedAdaptiveMax = Number.parseFloat(adaptiveMaxRaw);
+  const adaptivePollMaxMultiplier = Number.isFinite(parsedAdaptiveMax)
+    ? Math.max(1.0, Math.min(20.0, parsedAdaptiveMax))
+    : 4.0;
+
+  const adaptiveWarnRaw = getSetting(runtime, "COLONY_ADAPTIVE_POLL_WARN_THRESHOLD", "0.25")!;
+  const parsedAdaptiveWarn = Number.parseFloat(adaptiveWarnRaw);
+  const adaptivePollWarnThreshold = Number.isFinite(parsedAdaptiveWarn)
+    ? Math.max(0, Math.min(0.99, parsedAdaptiveWarn))
+    : 0.25;
+
+  const dmMinKarmaRaw = getSetting(runtime, "COLONY_DM_MIN_KARMA", "0")!;
+  const parsedDmMinKarma = Number.parseInt(dmMinKarmaRaw, 10);
+  const dmMinKarma = Number.isFinite(parsedDmMinKarma) && parsedDmMinKarma > 0
+    ? parsedDmMinKarma
+    : 0;
+
   return {
     apiKey,
     defaultColony,
@@ -632,6 +693,10 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     engageUseRising,
     engageTrendingBoost,
     engageTrendingRefreshMs,
+    adaptivePollEnabled,
+    adaptivePollMaxMultiplier,
+    adaptivePollWarnThreshold,
+    dmMinKarma,
   };
 }
 

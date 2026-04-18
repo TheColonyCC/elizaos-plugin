@@ -174,6 +174,41 @@ export class ColonyService extends Service {
 
   public llmCallHistory: Array<{ ts: number; outcome: "success" | "failure" }> = [];
 
+  /**
+   * v0.23.0: graded poll-interval multiplier derived from the v0.17
+   * sliding LLM-call window. Complements (doesn't replace) the binary
+   * `maybeTriggerLlmHealthPause` — instead of jumping straight from 1×
+   * to paused, we can ramp the poll rate down as failure rate climbs.
+   * Only the `ColonyInteractionClient` consumes this; post-client and
+   * engagement-client continue to use their own interval math.
+   *
+   * Returns `1.0` when:
+   *   - `adaptivePollEnabled` is false (opt-in feature)
+   *   - fewer than 3 samples in the recent window (small-sample guard,
+   *     mirrors `maybeTriggerLlmHealthPause`)
+   *   - failure rate is below `adaptivePollWarnThreshold`
+   *
+   * Otherwise scales linearly from 1.0 at `warnThreshold` to
+   * `adaptivePollMaxMultiplier` at rate=1.0.
+   */
+  computeLlmHealthMultiplier(now: number = Date.now()): number {
+    if (!this.colonyConfig?.adaptivePollEnabled) return 1.0;
+    const windowMs = this.colonyConfig.llmFailureWindowMs;
+    const recent = this.llmCallHistory.filter((e) => e.ts > now - windowMs);
+    if (recent.length < 3) return 1.0;
+    const failed = recent.filter((e) => e.outcome === "failure").length;
+    const rate = failed / recent.length;
+    const warn = this.colonyConfig.adaptivePollWarnThreshold;
+    if (rate <= warn) return 1.0;
+    const max = this.colonyConfig.adaptivePollMaxMultiplier;
+    // Avoid division by zero when warn=0.99 and rate=1.0 is the only
+    // trigger — treat the range (warn, 1.0] as spanning the full scale.
+    const span = 1.0 - warn;
+    const fraction = span > 0 ? (rate - warn) / span : 1.0;
+    const clampedFraction = Math.max(0, Math.min(1, fraction));
+    return 1.0 + (max - 1.0) * clampedFraction;
+  }
+
   public karmaHistory: KarmaSnapshot[] = [];
   public pausedUntilTs = 0;
   public pauseReason: PauseReason | null = null;
@@ -481,21 +516,54 @@ export class ColonyService extends Service {
   /**
    * Register process-level SIGTERM / SIGINT handlers that stop the service
    * on shutdown signals. Opt-in to avoid stepping on host shutdown logic.
+   *
+   * v0.23.0: also registers SIGUSR1 as an "engagement nudge" — when the
+   * operator sends `kill -USR1 $PID`, the engagement client runs one
+   * tick immediately out-of-band from its interval timer. Local-only
+   * control surface (signals can't cross machines), so no new network
+   * attack surface is introduced.
    */
   registerShutdownHandlers(): void {
     if (this.signalHandlersRegistered.length) return;
-    const signals: NodeJS.Signals[] = ["SIGTERM", "SIGINT"];
-    for (const sig of signals) {
+    const shutdownSignals: NodeJS.Signals[] = ["SIGTERM", "SIGINT"];
+    for (const sig of shutdownSignals) {
       const handler = this.makeShutdownHandler(sig);
       process.on(sig, handler);
       this.signalHandlersRegistered.push({ sig, handler });
     }
+    // v0.23.0: nudge signal. Kept separate from the shutdown loop so
+    // the handler body is clearly distinct.
+    const nudgeSig: NodeJS.Signals = "SIGUSR1";
+    const nudgeHandler = this.makeNudgeHandler();
+    process.on(nudgeSig, nudgeHandler);
+    this.signalHandlersRegistered.push({ sig: nudgeSig, handler: nudgeHandler });
   }
 
   private makeShutdownHandler(sig: NodeJS.Signals): () => void {
     return () => {
       logger.info(`⏹️  COLONY_SERVICE: received ${sig}, stopping clients`);
       void this.stop();
+    };
+  }
+
+  /**
+   * v0.23.0: handler for SIGUSR1 — triggers one engagement-client tick
+   * out-of-band. Called via `kill -USR1 $(cat .agent.pid)`. Non-fatal
+   * if the engagement client isn't running (e.g. `COLONY_ENGAGE_ENABLED=false`);
+   * the handler just logs and returns.
+   */
+  private makeNudgeHandler(): () => void {
+    return () => {
+      if (!this.engagementClient) {
+        logger.info(
+          "🔔 COLONY_SERVICE: SIGUSR1 received but engagement client isn't running — ignoring",
+        );
+        return;
+      }
+      logger.info("🔔 COLONY_SERVICE: SIGUSR1 received — triggering engagement tick");
+      // tickNow() already catches and logs internally; no extra .catch
+      // needed here.
+      void this.engagementClient.tickNow();
     };
   }
 
