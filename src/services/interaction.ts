@@ -92,7 +92,12 @@ export class ColonyInteractionClient {
   }
 
   private currentInterval(): number {
-    return this.pollIntervalMs * this.backoffMultiplier;
+    const base = this.pollIntervalMs * this.backoffMultiplier;
+    // v0.23.0: optional LLM-health multiplier. Opt-in via
+    // `COLONY_ADAPTIVE_POLL_ENABLED`; returns 1.0 when disabled, or
+    // when the sliding window doesn't have enough samples to decide.
+    const healthMul = this.service.computeLlmHealthMultiplier();
+    return base * healthMul;
   }
 
   private handleRateLimit(err: unknown): void {
@@ -182,7 +187,7 @@ export class ColonyInteractionClient {
       if (policy === "coalesce") {
         digest.add({
           type: typeKey,
-          actor: notification.actor?.username ?? undefined,
+          actor: notification.actor?.username,
           postId: notification.post_id ?? undefined,
         });
         await this.markRead(notification.id);
@@ -266,6 +271,37 @@ export class ColonyInteractionClient {
       return;
     }
 
+    // v0.23.0: DM karma gate. Drops DMs from low-karma senders BEFORE
+    // dispatch through `messageService.handleMessage`. Complements
+    // v0.21's DM-origin action guards — those block mutating actions
+    // from a hostile DM; this blocks the reply pipeline from even
+    // running for low-trust senders. Operator commands are evaluated
+    // above (and unaffected — if the configured operator lands here
+    // because their command didn't match the prefix, it still goes
+    // through normal dispatch and must satisfy this gate).
+    const dmMinKarma = this.service.colonyConfig.dmMinKarma;
+    if (dmMinKarma > 0) {
+      const senderKarma = await this.fetchUserKarma(username);
+      if (senderKarma !== null && senderKarma < dmMinKarma) {
+        logger.info(
+          `COLONY_INTERACTION: dropping DM from @${username} (karma ${senderKarma} < ${dmMinKarma} threshold)`,
+        );
+        this.service.recordActivity?.(
+          "self_check_rejection",
+          username,
+          `dm_karma_gate: ${senderKarma} < ${dmMinKarma}`,
+        );
+        try {
+          await (this.service.client as unknown as {
+            markConversationRead: (u: string) => Promise<unknown>;
+          }).markConversationRead(username);
+        } catch {
+          /* best-effort; a failed mark-read shouldn't amplify the drop */
+        }
+        return;
+      }
+    }
+
     // v0.19.0: per-conversation DM context. When enabled, include the
     // last N messages of the thread in the dispatched memory so the
     // agent's reply has multi-turn coherence. Off by default
@@ -278,7 +314,9 @@ export class ColonyInteractionClient {
             .filter((m) => typeof m.body === "string" && m.body.length > 0)
             .map((m) => ({
               senderUsername: m.sender?.username ?? "?",
-              body: m.body ?? "",
+              // body non-null asserted — filter above guarantees it's a
+              // non-empty string.
+              body: m.body as string,
             }))
         : undefined;
 

@@ -2,6 +2,38 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.23.0 — 2026-04-18
+
+Four operator-facing improvements — runtime adaptation + local-only control surface + remaining v0.21 defence-in-depth + observability for the v0.22 notification router.
+
+### Added
+
+- **Adaptive poll interval** (`COLONY_ADAPTIVE_POLL_ENABLED`, default `false`). Extends v0.17's binary LLM-health pause into a graded interval multiplier. `ColonyService.computeLlmHealthMultiplier()` reads the v0.17 sliding LLM-call window and returns a multiplier in `[1.0, adaptivePollMaxMultiplier]`:
+  - At or below `adaptivePollWarnThreshold` (default `0.25`) failure rate: **1.0×** (no slowdown).
+  - Scales linearly to `adaptivePollMaxMultiplier` (default `4.0`, clamped `[1.0, 20.0]`) at failure rate 1.0.
+  - Small-sample guard: requires ≥3 samples in the window before the multiplier departs from 1.0, matching `maybeTriggerLlmHealthPause`.
+  - `ColonyInteractionClient.currentInterval()` now reads this multiplier alongside the rate-limit `backoffMultiplier`, so the poll rate ramps down smoothly as Ollama struggles instead of jumping to paused.
+- **SIGUSR1 nudge handler.** When `COLONY_REGISTER_SIGNAL_HANDLERS=true`, `SIGUSR1` is now registered alongside `SIGTERM`/`SIGINT`. Sending the signal (e.g. `kill -USR1 $(cat .agent.pid)` from the operator's shell) triggers **one engagement-client tick immediately**, out-of-band from the interval timer. Enables local-only "nudge" workflows without standing up an HTTP endpoint or routing the command through a DM (the DM path was rejected as an attack-surface trade-off in v0.21 discussions). New public method `ColonyEngagementClient.tickNow()` runs a tick and catches its own errors so the signal handler never crashes the host process.
+- **`COLONY_DM_MIN_KARMA` gate** (default `0` = disabled). When set, DMs from senders with karma below this threshold are dropped in `ColonyInteractionClient.processConversation` **before** dispatch through `messageService.handleMessage`. Complements v0.21's DM action guards: v0.21 blocked the mutating-action attack surface; this blocks the reply-generation path itself, so a low-karma sockpuppet can't even elicit a reply. Operator kill-switch commands are evaluated above the gate and unaffected. Fails open when `getUser` errors — same semantics as the v0.11 `mentionMinKarma` gate. Dropped DMs are recorded in the activity log with reason `dm_karma_gate`.
+- **`COLONY_STATUS` surfaces v0.22 / v0.23 metrics.** The status action now conditionally shows:
+  - `Notification policy: vote:coalesce, follow:drop, ...` when the explicit policy map is non-empty.
+  - `Notification digests emitted: N` when `stats.notificationDigestsEmitted > 0`.
+  - `Adaptive poll: 1.50× (effective interval 180s vs base 120s)` when `adaptivePollEnabled` is true — always shown while enabled, even at 1.0×, so operators can see the current multiplier at a glance.
+  All three lines are purely additive; no change to existing output when the features are disabled.
+
+### Tooling
+
+- **`bun run test:coverage:isolated`** — new npm script that runs the full coverage suite under a transient `systemd-run --user --scope --slice=user.slice` wrapper on Linux. Motivated by a 2026-04-18 incident where a coverage run inside a systemd `claude.slice` cap pushed the slice to its `MemoryHigh=8G` soft limit and systemd-oomd killed the whole scope. Running coverage in its own scope keeps the test runner's memory footprint out of the developer-session cap. Falls back to plain `bun run test:coverage` when `CI=true` or `systemd-run` isn't available (macOS, non-systemd Linux, GitHub Actions runners). `test:coverage` itself is unchanged — CI continues to use it.
+
+### Changed
+
+- `ColonyInteractionClient.currentInterval()` return value now includes `computeLlmHealthMultiplier()` as a third factor alongside `pollIntervalMs` and `backoffMultiplier`. When `adaptivePollEnabled=false` (default), the multiplier is always `1.0` and behaviour is identical to v0.22.
+- `ColonyService.registerShutdownHandlers()` now also registers `SIGUSR1` (nudge). Calling it twice is still a no-op (guarded by `signalHandlersRegistered.length`).
+
+### Tests
+
+- 1546 tests across 51 files. **100% statement / function / line coverage, 98.64% branch coverage** (above the 98% floor). New test file: `v23-features.test.ts` — 34 tests covering config parsing (fallbacks + clamps + positive values for `adaptivePoll*` / `dmMinKarma`), `computeLlmHealthMultiplier` (disabled / small-sample / below-threshold / linear scale / max / window pruning / warn=0.99 edge / default `now`), `currentInterval()` consumes the multiplier, `tickNow()` swallows errors, DM karma gate (dmMinKarma=0 / drop-below / allow-at-threshold / fails-open-on-getUser-error / swallows markConversationRead failure), `COLONY_STATUS` output (policy hide/show, digest hide/show, adaptive-poll hide/show), and SIGUSR1 handler registration (added, idempotent, no-op-without-engagement-client, calls tickNow).
+
 ## 0.22.0 — 2026-04-18
 
 ### Added

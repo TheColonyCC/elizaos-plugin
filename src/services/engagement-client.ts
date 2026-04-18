@@ -243,6 +243,21 @@ export class ColonyEngagementClient {
     }
   }
 
+  /**
+   * v0.23.0: run one tick immediately, out-of-band from the interval
+   * loop. Used by the SIGUSR1 nudge handler so operators can force an
+   * engagement pass without restarting the agent. Errors are caught
+   * and logged rather than thrown — a failed nudge should not crash
+   * the host process.
+   */
+  async tickNow(): Promise<void> {
+    try {
+      await this.tick();
+    } catch (err) {
+      logger.warn(`COLONY_ENGAGEMENT_CLIENT: tickNow failed: ${String(err)}`);
+    }
+  }
+
   private async tick(): Promise<void> {
     if (!this.config.colonies.length) return;
 

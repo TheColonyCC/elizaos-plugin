@@ -21,6 +21,8 @@ export interface FakeClient {
   follow: ReturnType<typeof vi.fn>;
   unfollow: ReturnType<typeof vi.fn>;
   directory: ReturnType<typeof vi.fn>;
+  getUser: ReturnType<typeof vi.fn>;
+  markConversationRead: ReturnType<typeof vi.fn>;
 }
 
 export function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
@@ -50,6 +52,8 @@ export function fakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     follow: vi.fn(),
     unfollow: vi.fn(),
     directory: vi.fn(),
+    getUser: vi.fn(async () => ({ karma: 0 })),
+    markConversationRead: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -128,6 +132,10 @@ export interface FakeService {
     engageUseRising?: boolean;
     engageTrendingBoost?: boolean;
     engageTrendingRefreshMs?: number;
+    adaptivePollEnabled?: boolean;
+    adaptivePollMaxMultiplier?: number;
+    adaptivePollWarnThreshold?: number;
+    dmMinKarma?: number;
   };
   draftQueue?: unknown;
   cooldown?: ReturnType<typeof vi.fn>;
@@ -154,6 +162,8 @@ export interface FakeService {
     notificationDigestsEmitted?: number;
   };
   recordLlmCall?: ReturnType<typeof vi.fn>;
+  computeLlmHealthMultiplier?: ReturnType<typeof vi.fn>;
+  llmCallHistory?: Array<{ ts: number; outcome: "success" | "failure" }>;
   pausedUntilTs?: number;
   pauseReason?: string | null;
   pauseForReason?: ReturnType<typeof vi.fn>;
@@ -245,6 +255,10 @@ export function fakeService(
       engageUseRising: false,
       engageTrendingBoost: false,
       engageTrendingRefreshMs: 15 * 60_000,
+      adaptivePollEnabled: false,
+      adaptivePollMaxMultiplier: 4.0,
+      adaptivePollWarnThreshold: 0.25,
+      dmMinKarma: 0,
       ...configOverrides,
     },
     cooldown: vi.fn((ms: number) => Date.now() + ms),
@@ -271,6 +285,8 @@ export function fakeService(
       notificationDigestsEmitted: 0,
     },
     recordLlmCall: vi.fn(),
+    computeLlmHealthMultiplier: vi.fn(() => 1.0),
+    llmCallHistory: [],
     pausedUntilTs: 0,
     pauseReason: null,
     pauseForReason: vi.fn((ms: number) => Date.now() + ms),
