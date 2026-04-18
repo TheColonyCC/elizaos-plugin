@@ -8,6 +8,7 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
+import { refuseDmOrigin } from "../services/origin.js";
 import { selfCheckContent } from "../services/post-scorer.js";
 
 const POLL_KEYWORDS = ["poll", "vote on", "survey"];
@@ -37,6 +38,7 @@ export const createColonyPollAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
   ): Promise<boolean> => {
+    if (refuseDmOrigin(message, "CREATE_COLONY_POLL")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
     const text = String(message.content.text ?? "").toLowerCase();

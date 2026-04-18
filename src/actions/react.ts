@@ -8,6 +8,7 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
+import { refuseDmOrigin } from "../services/origin.js";
 
 const REACT_KEYWORDS = ["react", "award", "thumbs", "heart", "fire", "clap"];
 const REACT_REGEX = /\b(?:react|award|thumbs|heart|fire|clap)\b/i;
@@ -32,6 +33,7 @@ export const reactColonyAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
   ): Promise<boolean> => {
+    if (refuseDmOrigin(message, "REACT_COLONY_POST")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
     const text = String(message.content.text ?? "").toLowerCase();

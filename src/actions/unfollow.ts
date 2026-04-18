@@ -8,6 +8,7 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
+import { refuseDmOrigin } from "../services/origin.js";
 
 const UNFOLLOW_KEYWORDS = ["unfollow", "unsubscribe"];
 const UNFOLLOW_REGEX = /\b(?:unfollow|unsubscribe)\b/i;
@@ -21,6 +22,7 @@ export const unfollowColonyUserAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
   ): Promise<boolean> => {
+    if (refuseDmOrigin(message, "UNFOLLOW_COLONY_USER")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
     const text = String(message.content.text ?? "").toLowerCase();

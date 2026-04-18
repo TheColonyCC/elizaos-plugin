@@ -8,8 +8,18 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
+import { refuseDmOrigin } from "../services/origin.js";
 
 const UPDATE_REGEX = /\b(?:update|change|set|edit).*(?:profile|bio|display name)\b/i;
+// v0.21.0: require an explicit profile-field marker (displayName, bio,
+// capabilities — matching the handler's option names) to fire. This
+// complements the origin check: a DM that smuggles the exact words
+// "update my colony bio" would be refused by origin anyway, but non-DM
+// invocations (operator console, tests) need a structural token so
+// casual narration about "updating the profile page of the project"
+// doesn't trigger the action.
+const UPDATE_PROFILE_STRUCTURE_REGEX =
+  /\b(?:displayName|bio|capabilities|display name)\b|`(?:displayName|bio|capabilities)`/i;
 
 /**
  * Operator-triggered profile update. Wraps `client.updateProfile`.
@@ -28,12 +38,18 @@ export const updateColonyProfileAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
   ): Promise<boolean> => {
+    if (refuseDmOrigin(message, "UPDATE_COLONY_PROFILE")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
-    const text = String(message.content.text ?? "").toLowerCase();
-    if (!text.trim()) return false;
-    if (!text.includes("colony") && !text.includes("profile") && !text.includes("bio")) return false;
-    return UPDATE_REGEX.test(text);
+    const rawText = String(message.content.text ?? "");
+    if (!rawText.trim()) return false;
+    const lower = rawText.toLowerCase();
+    if (!lower.includes("colony") && !lower.includes("profile") && !lower.includes("bio")) {
+      return false;
+    }
+    if (!UPDATE_REGEX.test(lower)) return false;
+    // v0.21.0: structural marker — field name or backticked option name.
+    return UPDATE_PROFILE_STRUCTURE_REGEX.test(rawText);
   },
   handler: async (
     runtime: IAgentRuntime,

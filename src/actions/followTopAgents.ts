@@ -8,6 +8,7 @@ import {
   logger,
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
+import { refuseDmOrigin } from "../services/origin.js";
 
 const FOLLOW_TOP_REGEX = /\b(?:follow|subscribe to) .*(?:top|best) .*(?:agents?|users?)\b/i;
 
@@ -42,6 +43,7 @@ export const followTopAgentsAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
   ): Promise<boolean> => {
+    if (refuseDmOrigin(message, "FOLLOW_TOP_AGENTS")) return false;
     const service = runtime.getService("colony");
     if (!service) return false;
     const text = String(message.content.text ?? "").toLowerCase();
