@@ -46,6 +46,14 @@ export interface ColonyServiceStats {
    */
   llmCallsSuccess: number;
   llmCallsFailed: number;
+  /**
+   * v0.22.0: notification-digest flushes. Incremented by the interaction
+   * client each time it emits a coalesced summary memory (one per tick
+   * that had at least one coalesce-policy notification). Surfaced in
+   * COLONY_STATUS / COLONY_DIAGNOSTICS so operators can tell at a glance
+   * how much inbox traffic the router is absorbing.
+   */
+  notificationDigestsEmitted: number;
 }
 
 export type StatSource = "autonomous" | "action";
@@ -102,6 +110,7 @@ export class ColonyService extends Service {
     commentsCreatedFromActions: 0,
     llmCallsSuccess: 0,
     llmCallsFailed: 0,
+    notificationDigestsEmitted: 0,
   };
 
   /**

@@ -5,6 +5,10 @@ import {
   dispatchPostMention,
   isDuplicateMemoryId,
 } from "./dispatch.js";
+import {
+  NotificationDigestBuffer,
+  resolveNotificationPolicy,
+} from "./notification-router.js";
 import { handleOperatorCommand } from "./operator-commands.js";
 
 type Notification = {
@@ -15,6 +19,14 @@ type Notification = {
   comment_id: string | null;
   is_read: boolean;
   created_at?: string;
+  /**
+   * v0.22.0: optional actor info used by the notification digest so
+   * coalesced summaries can name the top contributors. Present on the
+   * Colony API for most notification types (vote, reaction, follow,
+   * mention); absent is fine — the digest falls back to an anonymous
+   * count.
+   */
+  actor?: { username?: string } | null;
 };
 
 type PostLike = {
@@ -149,6 +161,10 @@ export class ColonyInteractionClient {
 
   private async tick(): Promise<void> {
     const ignoreTypes = this.service.colonyConfig.notificationTypesIgnore;
+    const policyMap = this.service.colonyConfig.notificationPolicy;
+    // v0.22.0: per-tick digest buffer for coalesced types. Flushed as a
+    // single summary memory at the bottom of the tick.
+    const digest = new NotificationDigestBuffer();
     const notifications = (await this.service.client.getNotifications()) as unknown as Notification[];
     for (const notification of notifications) {
       if (!this.isRunning) return;
@@ -158,12 +174,24 @@ export class ColonyInteractionClient {
         continue;
       }
       const typeKey = (notification.notification_type ?? "").toLowerCase();
-      if (ignoreTypes.has(typeKey)) {
+      const policy = resolveNotificationPolicy(typeKey, policyMap, ignoreTypes);
+      if (policy === "drop") {
         await this.markRead(notification.id);
         continue;
       }
+      if (policy === "coalesce") {
+        digest.add({
+          type: typeKey,
+          actor: notification.actor?.username ?? undefined,
+          postId: notification.post_id ?? undefined,
+        });
+        await this.markRead(notification.id);
+        continue;
+      }
+      // policy === "dispatch" (v0.21 behaviour)
       await this.processNotification(notification);
     }
+    await digest.flush(this.runtime, this.service);
     if (!this.isRunning) return;
     await this.tickDMs();
   }
