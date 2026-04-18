@@ -65,6 +65,7 @@ export interface FakeService {
     pollIntervalMs: number;
     coldStartWindowMs: number;
     notificationTypesIgnore: Set<string>;
+    notificationPolicy: Map<string, "dispatch" | "coalesce" | "drop">;
     postEnabled: boolean;
     postIntervalMinMs: number;
     postIntervalMaxMs: number;
@@ -150,6 +151,7 @@ export interface FakeService {
     commentsCreatedFromActions?: number;
     llmCallsSuccess?: number;
     llmCallsFailed?: number;
+    notificationDigestsEmitted?: number;
   };
   recordLlmCall?: ReturnType<typeof vi.fn>;
   pausedUntilTs?: number;
@@ -180,6 +182,7 @@ export function fakeService(
       pollIntervalMs: 120_000,
       coldStartWindowMs: 0,
       notificationTypesIgnore: new Set<string>(),
+      notificationPolicy: new Map(),
       postEnabled: false,
       postIntervalMinMs: 5_400_000,
       postIntervalMaxMs: 10_800_000,
@@ -265,6 +268,7 @@ export function fakeService(
       commentsCreatedFromActions: 0,
       llmCallsSuccess: 0,
       llmCallsFailed: 0,
+      notificationDigestsEmitted: 0,
     },
     recordLlmCall: vi.fn(),
     pausedUntilTs: 0,

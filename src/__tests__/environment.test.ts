@@ -32,6 +32,7 @@ describe("loadColonyConfig", () => {
       pollIntervalMs: 120000,
       coldStartWindowMs: 24 * 3600 * 1000,
       notificationTypesIgnore: new Set(["vote", "follow", "award", "tip_received"]),
+      notificationPolicy: new Map(),
       dryRun: false,
       postEnabled: false,
       postIntervalMinMs: 5_400_000,

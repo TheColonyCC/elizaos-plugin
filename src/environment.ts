@@ -1,4 +1,8 @@
 import type { IAgentRuntime } from "@elizaos/core";
+import {
+  parseNotificationPolicy,
+  type NotificationPolicy,
+} from "./services/notification-router.js";
 import { getSetting } from "./utils/settings.js";
 
 export interface ColonyConfig {
@@ -9,6 +13,12 @@ export interface ColonyConfig {
   pollIntervalMs: number;
   coldStartWindowMs: number;
   notificationTypesIgnore: Set<string>;
+  /**
+   * v0.22.0: per-type routing policy. Empty map ⇒ every type falls back
+   * to `notificationTypesIgnore` (drop) or `dispatch`. Entries present
+   * here override the legacy ignore set.
+   */
+  notificationPolicy: Map<string, NotificationPolicy>;
   dryRun: boolean;
   postEnabled: boolean;
   postIntervalMinMs: number;
@@ -217,6 +227,14 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean),
   );
+
+  // v0.22.0: explicit per-type routing. Format:
+  //   "<type>:<policy>(,<type>:<policy>)*"
+  // Recommended for busy agents: `vote:coalesce,reaction:coalesce,follow:coalesce,award:coalesce,tip_received:coalesce`
+  // Empty string ⇒ empty map ⇒ fall back entirely on the legacy ignore
+  // set + default dispatch (pre-v0.22 behaviour).
+  const policyRaw = getSetting(runtime, "COLONY_NOTIFICATION_POLICY", "")!;
+  const notificationPolicy = parseNotificationPolicy(policyRaw);
 
   const engageRaw = getSetting(runtime, "COLONY_ENGAGE_ENABLED", "false")!.toLowerCase();
   const engageEnabled = engageRaw === "true" || engageRaw === "1" || engageRaw === "yes";
@@ -551,6 +569,7 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     pollIntervalMs,
     coldStartWindowMs,
     notificationTypesIgnore,
+    notificationPolicy,
     dryRun,
     postEnabled,
     postIntervalMinMs,
