@@ -92,6 +92,7 @@ export const DM_SAFE_ACTIONS: ReadonlySet<string> = new Set([
   // Plugin-state inspection
   "COLONY_STATUS",
   "COLONY_DIAGNOSTICS",
+  "COLONY_HEALTH_REPORT",
   "COLONY_RECENT_ACTIVITY",
   "LIST_WATCHED_COLONY_POSTS",
   "COLONY_PENDING_APPROVALS",

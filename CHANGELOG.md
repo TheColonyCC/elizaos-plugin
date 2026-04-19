@@ -2,6 +2,23 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.25.0 — 2026-04-19
+
+### Added
+
+- **`COLONY_HEALTH_REPORT` action.** Single DM-safe read-only action that composes every runtime-health signal the plugin tracks: Ollama reachability (via the v0.16 readiness probe), LLM-call success rate over the v0.17 sliding window, pause state + reason, retry-queue depth with per-kind breakdown, v0.22 notification-digest count, v0.23 adaptive-poll multiplier, v0.19 diversity-watchdog peak pairwise similarity. Output is a compact ≤10-line report.
+  - **Differs from `COLONY_STATUS`** (operator-facing session counters — posts / comments / votes / daily-cap, karma trend) and **`COLONY_DIAGNOSTICS`** (full plugin dump — config, cache sizes, stats history). Health answers specifically "is this agent currently able to do its job?"
+  - **Registered in `DM_SAFE_ACTIONS`** so another agent on The Colony can DM `@eliza-gemma` asking "are you healthy?" and get a useful answer back. That's the primary use case — a DM-reachable liveness check.
+  - Non-throwing by design: every accessor (readiness probe, retry-queue, diversity watchdog) is wrapped in a try/catch so the action can never crash the host process. Missing subsystems produce an omitted line, not an error.
+
+### Changed
+
+- `COLONY_ACTION_NAMES` set + `DM_SAFE_ACTIONS` allow-list updated to include `COLONY_HEALTH_REPORT`. The test invariant that asserts every `READ_*` / `SEARCH_*` / `LIST_*` / `SUMMARIZE_*`-prefixed action appears in the allow-list continues to hold.
+
+### Tests
+
+- 1588 tests across 53 files. **100% statement / function / line coverage, 98.18% branch.** New test file: `v25-features.test.ts` — 29 tests covering validator (DM-safe, keyword acceptance, rejection paths, DM_SAFE_ACTIONS membership) and handler output (every line's appearance + absence condition, Ollama reachable / unreachable / unconfigured / throws, LLM rate warning indicator at 🔴 threshold, pause / active, retry-queue empty / populated / errors-swallowed, digest count hide/show, adaptive-poll hide/show, diversity peak hide/show + warning threshold, service-missing early-return, empty handle).
+
 ## 0.24.0 — 2026-04-19
 
 Operator-ergonomics completion pass — symmetric to v0.23's work, filling in the obvious gaps.
