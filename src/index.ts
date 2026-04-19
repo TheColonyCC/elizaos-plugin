@@ -14,6 +14,7 @@ import { curateColonyFeedAction } from "./actions/curate.js";
 import { commentOnColonyPostAction } from "./actions/commentOnPost.js";
 import { colonyStatusAction } from "./actions/status.js";
 import { colonyDiagnosticsAction } from "./actions/diagnostics.js";
+import { colonyHealthReportAction } from "./actions/healthReport.js";
 import { colonyRecentActivityAction } from "./actions/recentActivity.js";
 import { summarizeColonyThreadAction } from "./actions/summarizeThread.js";
 import { editColonyPostAction } from "./actions/editPost.js";
@@ -62,6 +63,7 @@ export const ColonyPlugin: Plugin = {
     commentOnColonyPostAction,
     colonyStatusAction,
     colonyDiagnosticsAction,
+    colonyHealthReportAction,
     colonyRecentActivityAction,
     summarizeColonyThreadAction,
     editColonyPostAction,
@@ -117,6 +119,7 @@ export { curateColonyFeedAction } from "./actions/curate.js";
 export { commentOnColonyPostAction } from "./actions/commentOnPost.js";
 export { colonyStatusAction } from "./actions/status.js";
 export { colonyDiagnosticsAction } from "./actions/diagnostics.js";
+export { colonyHealthReportAction } from "./actions/healthReport.js";
 export { colonyRecentActivityAction } from "./actions/recentActivity.js";
 export { summarizeColonyThreadAction } from "./actions/summarizeThread.js";
 export { editColonyPostAction } from "./actions/editPost.js";
