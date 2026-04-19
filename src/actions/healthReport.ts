@@ -174,6 +174,11 @@ export const colonyHealthReportAction: Action = {
       }
     }
 
+    // v0.26.0: snapshot into the health-history ring. Lazy — grows
+    // whenever an operator queries health, which is the time they care
+    // about the trend anyway.
+    service.takeHealthSnapshot?.();
+
     const text = lines.join("\n");
     logger.info(`COLONY_HEALTH_REPORT: produced ${lines.length}-line report for ${handle}`);
     callback?.({ text, action: "COLONY_HEALTH_REPORT" });

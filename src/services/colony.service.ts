@@ -81,6 +81,7 @@ export interface ActivityEntry {
 }
 
 const ACTIVITY_RING_SIZE = 50;
+const HEALTH_HISTORY_SIZE = 50;
 const ACTIVITY_CACHE_PREFIX = "colony/activity-log";
 
 export class ColonyService extends Service {
@@ -173,6 +174,62 @@ export class ColonyService extends Service {
   }
 
   public llmCallHistory: Array<{ ts: number; outcome: "success" | "failure" }> = [];
+
+  /**
+   * v0.26.0: ring of recent health snapshots, capped at HEALTH_HISTORY_SIZE
+   * entries. Appended by `takeHealthSnapshot()` (lazy — called from
+   * `COLONY_HEALTH_REPORT` so the ring grows with each readout rather
+   * than on a separate timer). The matching `COLONY_HEALTH_HISTORY`
+   * action reads this ring and formats recent entries for trend
+   * inspection.
+   */
+  public healthSnapshots: Array<{
+    ts: number;
+    llmSuccessPct: number | null;
+    llmCalls: number;
+    paused: boolean;
+    pauseReason: string | null;
+    retryQueueSize: number | null;
+    digestsEmitted: number;
+  }> = [];
+
+  /**
+   * v0.26.0: sample current health state and append to the ring.
+   * Pruning: cap to the last 50 entries (~5 hours at a 5-minute
+   * engagement tick cadence). Non-throwing.
+   */
+  takeHealthSnapshot(now: number = Date.now()): void {
+    const windowMs = this.colonyConfig?.llmFailureWindowMs ?? 10 * 60_000;
+    const recent = this.llmCallHistory.filter((e) => e.ts > now - windowMs);
+    const llmSuccessPct = recent.length === 0
+      ? null
+      : Math.round(
+          (recent.filter((e) => e.outcome === "success").length / recent.length) * 100,
+        );
+    let retryQueueSize: number | null = null;
+    const pc = this.postClient as unknown as {
+      getRetryQueue?: () => ReadonlyArray<unknown>;
+    } | null;
+    if (pc && typeof pc.getRetryQueue === "function") {
+      try {
+        retryQueueSize = (pc.getRetryQueue() ?? []).length;
+      } catch {
+        // non-fatal
+      }
+    }
+    const snapshot = {
+      ts: now,
+      llmSuccessPct,
+      llmCalls: recent.length,
+      paused: this.pausedUntilTs > now,
+      pauseReason: this.pauseReason ?? null,
+      retryQueueSize,
+      digestsEmitted: this.stats.notificationDigestsEmitted ?? 0,
+    };
+    this.healthSnapshots = [...this.healthSnapshots, snapshot].slice(
+      -HEALTH_HISTORY_SIZE,
+    );
+  }
 
   /**
    * v0.23.0: graded poll-interval multiplier derived from the v0.17

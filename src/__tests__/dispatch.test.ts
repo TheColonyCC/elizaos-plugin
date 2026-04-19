@@ -161,4 +161,113 @@ describe("dispatchDirectMessage — internal dedup", () => {
     });
     expect(service.client.sendMessage).toHaveBeenCalledWith("alice", "reply");
   });
+
+  // v0.26.0: DM_SAFE_ACTIONS output passes through the action-meta
+  // filter. This test pins the fix discovered live-testing v0.25's
+  // COLONY_HEALTH_REPORT — without this exception, health-report's
+  // legitimate data output was being dropped as if it were error meta.
+  it("DM reply callback passes DM_SAFE_ACTIONS output through the meta filter", async () => {
+    service.client.sendMessage.mockResolvedValue({ id: "sent-2" });
+    runtime.messageService!.handleMessage = vi.fn(async (_rt, _msg, cb) => {
+      if (cb) {
+        const memories = await cb({
+          text: "Health report for @eliza-gemma:\n- Ollama: reachable",
+          action: "COLONY_HEALTH_REPORT",
+        });
+        expect(memories.length).toBe(1);
+      }
+      return {};
+    });
+    await dispatchDirectMessage(service as never, runtime, {
+      memoryIdKey: "fresh-safe",
+      senderUsername: "alice",
+      messageId: "m-2",
+      body: "are you healthy?",
+      conversationId: "c-2",
+    });
+    expect(service.client.sendMessage).toHaveBeenCalledWith(
+      "alice",
+      expect.stringContaining("Health report"),
+    );
+  });
+
+  it("DM reply callback still drops output from NON-DM-safe actions (v0.19 filter preserved)", async () => {
+    service.client.sendMessage.mockResolvedValue({ id: "x" });
+    runtime.messageService!.handleMessage = vi.fn(async (_rt, _msg, cb) => {
+      if (cb) {
+        const memories = await cb({
+          text: "I need a username and body to send a Colony DM.",
+          action: "SEND_COLONY_DM",
+        });
+        expect(memories).toEqual([]);
+      }
+      return {};
+    });
+    await dispatchDirectMessage(service as never, runtime, {
+      memoryIdKey: "fresh-meta",
+      senderUsername: "alice",
+      messageId: "m-3",
+      body: "dm someone",
+      conversationId: "c-3",
+    });
+    expect(service.client.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("dispatchPostMention — DM_SAFE_ACTIONS passthrough (v0.26)", () => {
+  let service: FakeService;
+  let runtime: MockRuntime;
+
+  beforeEach(() => {
+    service = fakeService();
+    runtime = mockRuntime();
+  });
+
+  it("post-mention reply callback passes DM_SAFE_ACTIONS output through", async () => {
+    service.client.createComment.mockResolvedValue({ id: "c1" });
+    runtime.messageService!.handleMessage = vi.fn(async (_rt, _msg, cb) => {
+      if (cb) {
+        const memories = await cb({
+          text: "Status for @eliza: karma 43, not paused",
+          action: "COLONY_STATUS",
+        });
+        expect(memories.length).toBe(1);
+      }
+      return {};
+    });
+    await dispatchPostMention(service as never, runtime, {
+      memoryIdKey: "pm-safe",
+      postId: "00000000-0000-0000-0000-000000000009",
+      postTitle: "how are you",
+      postBody: "?",
+      authorUsername: "bob",
+    });
+    expect(service.client.createComment).toHaveBeenCalledWith(
+      "00000000-0000-0000-0000-000000000009",
+      expect.stringContaining("Status for"),
+      undefined,
+    );
+  });
+
+  it("post-mention reply callback still drops mutating-action meta", async () => {
+    service.client.createComment.mockResolvedValue({ id: "c2" });
+    runtime.messageService!.handleMessage = vi.fn(async (_rt, _msg, cb) => {
+      if (cb) {
+        const memories = await cb({
+          text: "I need a postId and comment body to reply on The Colony.",
+          action: "REPLY_COLONY_POST",
+        });
+        expect(memories).toEqual([]);
+      }
+      return {};
+    });
+    await dispatchPostMention(service as never, runtime, {
+      memoryIdKey: "pm-meta",
+      postId: "00000000-0000-0000-0000-00000000000A",
+      postTitle: "test",
+      postBody: "?",
+      authorUsername: "bob",
+    });
+    expect(service.client.createComment).not.toHaveBeenCalled();
+  });
 });

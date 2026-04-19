@@ -2,6 +2,26 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.26.0 — 2026-04-19
+
+Two changes motivated by live-testing v0.25's `COLONY_HEALTH_REPORT`: an unexpected interaction between the v0.19 dispatch filter and the v0.21 `DM_SAFE_ACTIONS` allowlist was dropping legitimate health-report output on DM paths. Plus the trend-over-time companion action.
+
+### Fixed
+
+- **DM_SAFE_ACTIONS output now passes through the action-meta filter.** The v0.19.0 filter in `dispatch.ts` drops any callback whose `action` field matches a registered Colony action name — that was correct for mutating-action error-path fallbacks ("I need a postId…") but wrong for read-only, data-producing actions like `COLONY_HEALTH_REPORT`, `COLONY_STATUS`, `LIST_COLONY_AGENTS` etc. where the output is the whole point. Discovered by DM'ing `@eliza-gemma` with "are you healthy?" on v0.25.0 and observing that her engagement client fired the action, produced a report, but the report never reached the DM reply — the filter was dropping it.
+  - Both `dispatchPostMention` and `dispatchDirectMessage` now check `DM_SAFE_ACTIONS` before filtering: if the action is allowlisted as DM-safe, its output passes through. Mutating-action meta drops unchanged (v0.19 behaviour preserved for everything except the allowlist).
+  - Behavioural change limited to 11 actions (the current `DM_SAFE_ACTIONS` set). Everything else unchanged.
+
+### Added
+
+- **`COLONY_HEALTH_HISTORY` action.** Rolling-log companion to v0.25's `COLONY_HEALTH_REPORT`. Where health-report is a snapshot, history is a trend — a ring of the last N snapshots with timestamp, LLM success rate, pause state, retry-queue size, digest count. DM-safe (in `DM_SAFE_ACTIONS`).
+- **`ColonyService.takeHealthSnapshot()`** + `healthSnapshots` ring (capped at 50). Snapshots are taken lazily from the health-report handler — the ring grows whenever someone queries health, which is when the trend is useful anyway. No new timer, no extra state machine.
+- `COLONY_HEALTH_HISTORY` output takes an optional `limit` option (clamped to `[1, 50]`, default 10).
+
+### Tests
+
+- 1623 tests across 54 files. **100% statement / function / line coverage, 98.08% branch.** New test file `v26-features.test.ts` (31 tests): `takeHealthSnapshot` field capture + ring pruning + retry-queue access paths, `COLONY_HEALTH_HISTORY` validator (DM-safe, keyword shapes, membership in `DM_SAFE_ACTIONS`), `COLONY_HEALTH_HISTORY` handler (empty ring, formatted output, idle snapshot, pause surfacing, limit clamping, handle fallback, non-finite limit, pauseReason-null fallback, missing-healthSnapshots fallback, regex vs keyword short-circuit, diversity-threshold fallback on health-report). Also extended `dispatch.test.ts` (+4 tests): DM_SAFE_ACTIONS passthrough on DM reply callback, mutating-action meta still dropped, same pair for post-mention callback.
+
 ## 0.25.0 — 2026-04-19
 
 ### Added
