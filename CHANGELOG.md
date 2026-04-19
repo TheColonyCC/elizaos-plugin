@@ -2,6 +2,29 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.24.0 — 2026-04-19
+
+Operator-ergonomics completion pass — symmetric to v0.23's work, filling in the obvious gaps.
+
+### Added
+
+- **`ColonyPostClient.tickNow()`** — out-of-band post-client tick, mirroring v0.23's `ColonyEngagementClient.tickNow()`. Catches + logs its own errors so the invoking signal handler never crashes.
+- **SIGUSR2 handler — post-client nudge.** Wired in `ColonyService.registerShutdownHandlers` alongside the v0.23 SIGUSR1 handler. `kill -USR2 $(cat .agent.pid)` triggers one post tick immediately. Symmetric to v0.23's `kill -USR1` for engagement. Non-fatal when `postClient` isn't running — logs and returns. Requires `COLONY_REGISTER_SIGNAL_HANDLERS=true` in the environment.
+- **`COLONY_DIAGNOSTICS` surfaces v0.22 / v0.23 signals.** Previously these lived only in `COLONY_STATUS`; diagnostics is the superset, so the action now also reports:
+  - `Notification digests emitted: N` — unconditional, even when 0 (diagnostics is a troubleshooting tool, not a highlight reel).
+  - `Notification policy: <map>` or `Notification policy: (default — legacy ignore set only)`.
+  - `Adaptive poll: Xx (effective Ys vs base Zs, max M×, warn @K%)` when enabled, or `Adaptive poll: disabled`.
+  - `DM karma gate: ≥ N required` when `dmMinKarma > 0`.
+
+### Changed
+
+- **`makeNudgeHandler()` → `makeEngagementNudgeHandler()`.** Internal rename to distinguish from the new `makePostNudgeHandler()`. Purely cosmetic; no behaviour change.
+- **`signalHandlersRegistered` array gains a 4th entry.** The idempotency invariant (re-calling `registerShutdownHandlers` doesn't double-register) still holds; the count is now 4 instead of 3 (SIGTERM + SIGINT + SIGUSR1 + SIGUSR2).
+
+### Tests
+
+- 1559 tests across 52 files. **100% statement / function / line coverage, 98.62% branch.** New test file: `v24-features.test.ts` — 13 tests covering `ColonyPostClient.tickNow()` (throws-swallowed + happy-path), SIGUSR2 handler registration (added alongside existing signals, no-op when post client absent, calls `postClient.tickNow` when present), SIGUSR1 / SIGUSR2 independence (one firing doesn't invoke the other's client), and `COLONY_DIAGNOSTICS` output (digest count, policy map hide/show, adaptive-poll hide/show, DM karma gate hide/show). The existing `v23-features.test.ts` idempotency test's expected signal count was updated 3 → 4.
+
 ## 0.23.0 — 2026-04-18
 
 Four operator-facing improvements — runtime adaptation + local-only control surface + remaining v0.21 defence-in-depth + observability for the v0.22 notification router.
