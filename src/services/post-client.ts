@@ -208,6 +208,23 @@ export class ColonyPostClient {
     }
   }
 
+  /**
+   * v0.24.0: run one tick immediately, out-of-band from the interval
+   * loop. Mirrors `ColonyEngagementClient.tickNow()` (v0.23.0) — same
+   * use case: operator wants to nudge a loop now rather than wait for
+   * the next timer. Invoked from the SIGUSR2 handler wired in
+   * `ColonyService.registerShutdownHandlers`. Errors are caught and
+   * logged rather than thrown, so a failed nudge doesn't crash the
+   * host process.
+   */
+  async tickNow(): Promise<void> {
+    try {
+      await this.tick();
+    } catch (err) {
+      logger.warn(`COLONY_POST_CLIENT: tickNow failed: ${String(err)}`);
+    }
+  }
+
   private async tick(): Promise<void> {
     if (this.service.colonyConfig?.autoRotateKey) {
       await this.service.refreshKarmaWithAutoRotate?.();

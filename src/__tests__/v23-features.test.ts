@@ -545,7 +545,9 @@ describe("ColonyService — SIGUSR1 nudge handler registration", () => {
   it("registerShutdownHandlers is idempotent", () => {
     svc.registerShutdownHandlers();
     svc.registerShutdownHandlers();
+    // 4 = SIGTERM + SIGINT + SIGUSR1 (v0.23) + SIGUSR2 (v0.24). If a
+    // future release adds another signal this count changes too.
     // @ts-expect-error private access
-    expect(svc.signalHandlersRegistered.length).toBe(3);
+    expect(svc.signalHandlersRegistered.length).toBe(4);
   });
 });

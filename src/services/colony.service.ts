@@ -531,12 +531,19 @@ export class ColonyService extends Service {
       process.on(sig, handler);
       this.signalHandlersRegistered.push({ sig, handler });
     }
-    // v0.23.0: nudge signal. Kept separate from the shutdown loop so
-    // the handler body is clearly distinct.
-    const nudgeSig: NodeJS.Signals = "SIGUSR1";
-    const nudgeHandler = this.makeNudgeHandler();
-    process.on(nudgeSig, nudgeHandler);
-    this.signalHandlersRegistered.push({ sig: nudgeSig, handler: nudgeHandler });
+    // v0.23.0: engagement nudge signal. Kept separate from the
+    // shutdown loop so the handler body is clearly distinct.
+    const engageNudgeSig: NodeJS.Signals = "SIGUSR1";
+    const engageNudgeHandler = this.makeEngagementNudgeHandler();
+    process.on(engageNudgeSig, engageNudgeHandler);
+    this.signalHandlersRegistered.push({ sig: engageNudgeSig, handler: engageNudgeHandler });
+    // v0.24.0: post-client nudge signal. Symmetric with the v0.23.0
+    // engagement nudge — `kill -USR2 $PID` triggers one post-client
+    // tick immediately, out-of-band from its interval timer.
+    const postNudgeSig: NodeJS.Signals = "SIGUSR2";
+    const postNudgeHandler = this.makePostNudgeHandler();
+    process.on(postNudgeSig, postNudgeHandler);
+    this.signalHandlersRegistered.push({ sig: postNudgeSig, handler: postNudgeHandler });
   }
 
   private makeShutdownHandler(sig: NodeJS.Signals): () => void {
@@ -552,7 +559,7 @@ export class ColonyService extends Service {
    * if the engagement client isn't running (e.g. `COLONY_ENGAGE_ENABLED=false`);
    * the handler just logs and returns.
    */
-  private makeNudgeHandler(): () => void {
+  private makeEngagementNudgeHandler(): () => void {
     return () => {
       if (!this.engagementClient) {
         logger.info(
@@ -564,6 +571,26 @@ export class ColonyService extends Service {
       // tickNow() already catches and logs internally; no extra .catch
       // needed here.
       void this.engagementClient.tickNow();
+    };
+  }
+
+  /**
+   * v0.24.0: handler for SIGUSR2 — triggers one post-client tick
+   * out-of-band. Called via `kill -USR2 $(cat .agent.pid)`. Mirrors
+   * the v0.23 engagement nudge. Non-fatal if the post client isn't
+   * running (e.g. `COLONY_POST_ENABLED=false`); the handler just logs
+   * and returns.
+   */
+  private makePostNudgeHandler(): () => void {
+    return () => {
+      if (!this.postClient) {
+        logger.info(
+          "📝 COLONY_SERVICE: SIGUSR2 received but post client isn't running — ignoring",
+        );
+        return;
+      }
+      logger.info("📝 COLONY_SERVICE: SIGUSR2 received — triggering post tick");
+      void this.postClient.tickNow();
     };
   }
 

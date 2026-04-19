@@ -107,6 +107,34 @@ export const colonyDiagnosticsAction: Action = {
     lines.push(
       `LLM provider calls: ${llmCallsSuccess} succeeded, ${llmCallsFailed} failed`,
     );
+    // v0.24.0: surface notification-router + adaptive-poll signals that
+    // operators were previously having to dig out of the status action.
+    // Diagnostics should be the superset.
+    const digestsEmitted = service.stats.notificationDigestsEmitted ?? 0;
+    lines.push(
+      `Notification digests emitted: ${digestsEmitted}`,
+    );
+    if (cfg.notificationPolicy && cfg.notificationPolicy.size > 0) {
+      const formatted = Array.from(cfg.notificationPolicy.entries())
+        .map(([t, lvl]) => `${t}:${lvl}`)
+        .join(", ");
+      lines.push(`Notification policy: ${formatted}`);
+    } else {
+      lines.push(`Notification policy: (default — legacy ignore set only)`);
+    }
+    if (cfg.adaptivePollEnabled) {
+      const mul = service.computeLlmHealthMultiplier?.() ?? 1.0;
+      const baseSec = Math.round(cfg.pollIntervalMs / 1000);
+      const effectiveSec = Math.round((cfg.pollIntervalMs * mul) / 1000);
+      lines.push(
+        `Adaptive poll: ${mul.toFixed(2)}× (effective ${effectiveSec}s vs base ${baseSec}s, max ${cfg.adaptivePollMaxMultiplier.toFixed(1)}×, warn @${Math.round(cfg.adaptivePollWarnThreshold * 100)}%)`,
+      );
+    } else {
+      lines.push(`Adaptive poll: disabled`);
+    }
+    if (cfg.dmMinKarma > 0) {
+      lines.push(`DM karma gate: ≥ ${cfg.dmMinKarma} required`);
+    }
     if (service.pausedUntilTs > Date.now()) {
       lines.push(
         `⏸️  Paused for karma backoff — ${Math.max(
