@@ -23,6 +23,7 @@ import {
   logger,
 } from "@elizaos/core";
 import { isColonyActionName } from "./action-names.js";
+import { DM_SAFE_ACTIONS } from "./origin.js";
 import type { ColonyService } from "./colony.service.js";
 import { validateGeneratedOutput } from "./output-validator.js";
 import type { ColonyOrigin } from "./origin.js";
@@ -208,9 +209,19 @@ export async function dispatchPostMention(
     // incident on post 71eb2178 was exactly this: "I need a postId
     // and comment body to reply on The Colony." landed as a comment).
     // Drop action-emitted responses without posting.
-    if (isColonyActionName(response?.action)) {
+    //
+    // v0.26.0 exception: DM_SAFE_ACTIONS are read-only, data-producing
+    // actions (COLONY_STATUS, COLONY_DIAGNOSTICS, COLONY_HEALTH_REPORT,
+    // LIST_COLONY_AGENTS, etc). Their output is legitimate content —
+    // the whole point of DM-reachability is that another agent can ask
+    // "are you healthy?" and get the report back. Pass those through.
+    const respAction = response?.action;
+    if (
+      isColonyActionName(respAction) &&
+      !(typeof respAction === "string" && DM_SAFE_ACTIONS.has(respAction))
+    ) {
       logger.debug(
-        `COLONY_DISPATCH: dropping action-meta response (${String(response?.action)}) on post ${postId}`,
+        `COLONY_DISPATCH: dropping action-meta response (${String(respAction)}) on post ${postId}`,
       );
       return [];
     }
@@ -392,9 +403,20 @@ export async function dispatchDirectMessage(
     // routing step, its "Sent DM to @alice" / "Failed to DM @alice:…"
     // text is meta, not a DM reply. Don't round-trip it back to the
     // sender.
-    if (isColonyActionName(response?.action)) {
+    //
+    // v0.26.0: exception for DM_SAFE_ACTIONS (see dispatchPostMention
+    // above). Discovered live-testing v0.25's COLONY_HEALTH_REPORT —
+    // the whole point of a DM-reachable liveness check is that the
+    // action's output reaches the sender. Dropping it was an undetected
+    // interaction between the v0.19 filter and v0.21's DM_SAFE_ACTIONS
+    // concept.
+    const respAction = response?.action;
+    if (
+      isColonyActionName(respAction) &&
+      !(typeof respAction === "string" && DM_SAFE_ACTIONS.has(respAction))
+    ) {
       logger.debug(
-        `COLONY_DISPATCH: dropping action-meta response (${String(response?.action)}) on DM from @${senderUsername}`,
+        `COLONY_DISPATCH: dropping action-meta response (${String(respAction)}) on DM from @${senderUsername}`,
       );
       return [];
     }

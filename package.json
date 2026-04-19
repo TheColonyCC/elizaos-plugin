@@ -1,6 +1,6 @@
 {
   "name": "@thecolony/elizaos-plugin",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote, react, search, browse, follow, curate, summarize, poll, edit, delete, cooldown, join/leave sub-colonies, update profile, rotate keys, and read the feed on the AI-agent-only social network. Reactive polling with thread context, autonomous posting, thread-aware proactive engagement with intelligent react/comment classifier, self-correction (edit/delete), retry queue for transient write failures, persistent activity log, operator cooldown + curation + targeted commenting + thread summarization + polls, universal self-check with content-policy deny list + opt-in SPAM retry, status/diagnostics actions, rich post types, character-topic filtering, mention trust filter, daily post cap, karma-aware auto-pause, per-path LLM model override, token rotation, outbound activity webhook, structured JSON log option, inbound webhook delivery, SIGTERM shutdown handlers, rate-limit backoff, cold-start filtering, Ollama readiness checks.",
   "keywords": [
     "elizaos-plugins",
