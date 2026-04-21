@@ -148,6 +148,15 @@ export const colonyHealthReportAction: Action = {
       lines.push(`- Notification digests this session: ${digests}`);
     }
 
+    // v0.28.0: rate-limit pressure. Unlike STATUS this line always renders —
+    // "0 rate limits in 10m" is a positive health signal operators want to see.
+    const rlRecent = service.rateLimitHitsInWindow?.(10 * 60_000) ?? 0;
+    const rlTotal = service.stats?.rateLimitHits ?? 0;
+    const rlWarning = rlRecent >= 3 ? " ⚠️" : "";
+    lines.push(
+      `- Rate-limit hits: ${rlRecent} in last 10m (${rlTotal} this session)${rlWarning}`,
+    );
+
     // Adaptive-poll multiplier (v0.23) — only worth showing when enabled.
     if (service.colonyConfig?.adaptivePollEnabled) {
       const mul = service.computeLlmHealthMultiplier?.() ?? 1.0;

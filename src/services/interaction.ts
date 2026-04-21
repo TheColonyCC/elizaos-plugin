@@ -92,6 +92,31 @@ export class ColonyInteractionClient {
     }
   }
 
+  /**
+   * v0.28.0: run one tick immediately, out-of-band from the interval loop.
+   * Mirrors `ColonyPostClient.tickNow()` (v0.24) and
+   * `ColonyEngagementClient.tickNow()` (v0.23). Primary use case: the
+   * catch-up trigger in the post / engagement clients — when a generation
+   * takes longer than `catchupThresholdMs`, the notification feed may have
+   * piled up during the GPU-locked window ("deafness window"), and a
+   * targeted tick immediately after generation clears the backlog without
+   * waiting for the next scheduled poll.
+   *
+   * Requires `isRunning === true` (set by `start()`); otherwise a no-op.
+   * This prevents a catch-up from running after the service has been
+   * stopped for shutdown. Errors are caught + logged; a failed nudge
+   * shouldn't crash the host process or tank the triggering client.
+   */
+  async tickNow(): Promise<void> {
+    if (!this.isRunning) return;
+    try {
+      await this.tick();
+    } catch (err) {
+      logger.warn(`COLONY_INTERACTION: tickNow failed: ${String(err)}`);
+      this.handleRateLimit(err);
+    }
+  }
+
   private currentInterval(): number {
     const base = this.pollIntervalMs * this.backoffMultiplier;
     // v0.23.0: optional LLM-health multiplier. Opt-in via
@@ -119,6 +144,8 @@ export class ColonyInteractionClient {
         retryAfter !== undefined ? `, server suggested Retry-After ${retryAfter}s` : ""
       })`,
     );
+    // v0.28.0: feed the hit into the service ring for STATUS / HEALTH_REPORT.
+    this.service.recordRateLimitIfApplicable?.(err, "interaction");
   }
 
   private resetBackoff(): void {

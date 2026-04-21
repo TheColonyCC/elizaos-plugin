@@ -198,14 +198,40 @@ export class ColonyPostClient {
     // Initial delay — don't post immediately on restart. Matches plugin-twitter.
     await this.sleep(this.nextDelay());
     while (this.isRunning) {
+      const startedAt = Date.now();
       try {
         await this.tick();
       } catch (err) {
         logger.warn(`COLONY_POST_CLIENT tick failed: ${String(err)}`);
+        // v0.28.0: record rate-limit hits for STATUS / HEALTH_REPORT.
+        this.service.recordRateLimitIfApplicable?.(err, "post");
       }
+      // v0.28.0: catch-up trigger. If the tick took longer than the
+      // configured threshold, the notification feed likely piled up
+      // during the GPU-locked window — fire an out-of-band interaction
+      // tick to clear it before the next scheduled poll. Non-throwing;
+      // on stop() mid-loop the nudge is a no-op via tickNow's
+      // isRunning guard.
+      await this.maybeTriggerCatchup(Date.now() - startedAt);
       if (!this.isRunning) return;
       await this.sleep(this.nextDelay());
     }
+  }
+
+  /**
+   * v0.28.0 helper — fire an interaction-client catch-up if the tick
+   * exceeded the configured threshold.
+   */
+  private async maybeTriggerCatchup(elapsedMs: number): Promise<void> {
+    const threshold = this.service.colonyConfig?.catchupThresholdMs ?? 0;
+    if (threshold <= 0 || elapsedMs < threshold) return;
+    const ic = this.service.interactionClient;
+    if (!ic) return;
+    logger.info(
+      `COLONY_POST_CLIENT: tick took ${elapsedMs}ms (≥ ${threshold}ms) — firing interaction catch-up`,
+    );
+    this.service.incrementStat?.("catchupsTriggered");
+    await ic.tickNow();
   }
 
   /**
@@ -222,6 +248,8 @@ export class ColonyPostClient {
       await this.tick();
     } catch (err) {
       logger.warn(`COLONY_POST_CLIENT: tickNow failed: ${String(err)}`);
+      // v0.28.0: also record rate-limit hits from nudge-triggered ticks.
+      this.service.recordRateLimitIfApplicable?.(err, "post");
     }
   }
 

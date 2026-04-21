@@ -63,6 +63,30 @@ export interface ColonyServiceStats {
    * in STATUS / DIAGNOSTICS / HEALTH_REPORT.
    */
   threadDigestsEmitted: number;
+  /**
+   * v0.28.0: total rate-limit hits observed this session, across all
+   * autonomy loops. Operators use this to spot throttling at a glance;
+   * trend + source breakdown lives in `rateLimitHistory` below.
+   */
+  rateLimitHits: number;
+  /**
+   * v0.28.0: catch-up ticks fired. Incremented whenever a slow post /
+   * engagement tick triggers `interactionClient.tickNow()` to clear a
+   * notification backlog that accumulated during the GPU-locked window.
+   */
+  catchupsTriggered: number;
+}
+
+/**
+ * v0.28.0 — per-source rate-limit hit entry in the rolling ring.
+ * `source` identifies which autonomy loop hit the limit, so operators
+ * can distinguish "my engagement client is being throttled" from
+ * "the whole API is 429-ing."
+ */
+export interface RateLimitHit {
+  ts: number;
+  source: "interaction" | "post" | "engagement" | "action";
+  retryAfter?: number;
 }
 
 export type StatSource = "autonomous" | "action";
@@ -122,7 +146,17 @@ export class ColonyService extends Service {
     llmCallsFailed: 0,
     notificationDigestsEmitted: 0,
     threadDigestsEmitted: 0,
+    rateLimitHits: 0,
+    catchupsTriggered: 0,
   };
+
+  /**
+   * v0.28.0 — rolling ring of recent rate-limit hits. Capped at 50 entries
+   * (~plenty for the last hour at realistic throttling rates). Used by
+   * STATUS / HEALTH_REPORT / HEALTH_HISTORY to visualise throttle pressure
+   * over time and distinguish "one transient blip" from "sustained 429s."
+   */
+  public rateLimitHistory: RateLimitHit[] = [];
 
   /**
    * v0.16.0: bump the LLM-health counters from generation paths. Separate
@@ -134,6 +168,43 @@ export class ColonyService extends Service {
    * recent-window failure rate without rescanning anything. The ring is
    * pruned on each call — no background timer needed.
    */
+  /**
+   * v0.28.0 — record a rate-limit hit if the thrown error looks like one.
+   * Non-throwing; no-op on non-rate-limit errors. Ring capped at 50.
+   *
+   * Call from any client's top-level tick/action catch block. Pass the
+   * loop name so the surface area reports per-source throttle pressure —
+   * helps operators tell "engagement-client is hitting the comment
+   * endpoint limit" from "every client is 429-ing."
+   */
+  recordRateLimitIfApplicable(
+    err: unknown,
+    source: RateLimitHit["source"],
+  ): void {
+    const rlErr = err as { name?: string; retryAfter?: number };
+    const ctorName = (err as { constructor?: { name?: string } })?.constructor
+      ?.name;
+    const isRateLimit =
+      rlErr?.name === "ColonyRateLimitError" ||
+      ctorName === "ColonyRateLimitError";
+    if (!isRateLimit) return;
+    const retryAfter =
+      typeof rlErr.retryAfter === "number" ? rlErr.retryAfter : undefined;
+    const entry: RateLimitHit = { ts: Date.now(), source, retryAfter };
+    this.rateLimitHistory = [...this.rateLimitHistory, entry].slice(-50);
+    this.stats = { ...this.stats, rateLimitHits: this.stats.rateLimitHits + 1 };
+  }
+
+  /**
+   * v0.28.0 — count of rate-limit hits in the last `windowMs` milliseconds.
+   * Used by STATUS / HEALTH_REPORT to decide whether to surface the metric
+   * (low-noise when the agent hasn't been throttled in ages) and to warn
+   * when the rate is high enough to matter.
+   */
+  rateLimitHitsInWindow(windowMs: number, now: number = Date.now()): number {
+    return this.rateLimitHistory.filter((h) => h.ts > now - windowMs).length;
+  }
+
   recordLlmCall(outcome: "success" | "failure"): void {
     if (outcome === "success") {
       this.stats = { ...this.stats, llmCallsSuccess: this.stats.llmCallsSuccess + 1 };
@@ -207,6 +278,12 @@ export class ColonyService extends Service {
      * can show both independently.
      */
     threadDigestsEmitted: number;
+    /**
+     * v0.28.0: rate-limit hits in the last 10 min. Lets HEALTH_HISTORY
+     * show a throttle trend — "we were being 429'd 20 minutes ago, now
+     * calm" is very different from "still hitting 429s right now."
+     */
+    rateLimitHitsRecent: number;
   }> = [];
 
   /**
@@ -242,6 +319,7 @@ export class ColonyService extends Service {
       retryQueueSize,
       digestsEmitted: this.stats.notificationDigestsEmitted ?? 0,
       threadDigestsEmitted: this.stats.threadDigestsEmitted ?? 0,
+      rateLimitHitsRecent: this.rateLimitHitsInWindow(10 * 60_000, now),
     };
     this.healthSnapshots = [...this.healthSnapshots, snapshot].slice(
       -HEALTH_HISTORY_SIZE,
@@ -786,6 +864,7 @@ export class ColonyService extends Service {
         approvalRequired: service.colonyConfig.postApprovalRequired,
         draftQueue: service.draftQueue ?? undefined,
         lengthTarget: service.colonyConfig.engageLengthTarget,
+        threadCompression: service.colonyConfig.engageThreadCompression,
         useRising: service.colonyConfig.engageUseRising,
         trendingBoost: service.colonyConfig.engageTrendingBoost,
         trendingRefreshMs: service.colonyConfig.engageTrendingRefreshMs,

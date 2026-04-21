@@ -211,6 +211,17 @@ export const colonyStatusAction: Action = {
       lines.push(`Notification digests emitted: ${digestCount}.`);
     }
 
+    // v0.28.0: rate-limit visibility. Only surface when the agent has
+    // been throttled this session — operators shouldn't see a "0 hits"
+    // line on every status read. The 10-minute window mirrors the
+    // LLM-health window so dashboards can compose both cleanly.
+    const rlTotal = stats.rateLimitHits ?? 0;
+    if (rlTotal > 0) {
+      const recent = service.rateLimitHitsInWindow?.(10 * 60_000) ?? 0;
+      const suffix = recent > 0 ? `, ${recent} in last 10m` : ", quiet now";
+      lines.push(`Rate-limit hits this session: ${rlTotal}${suffix}.`);
+    }
+
     // v0.23.0: adaptive poll visibility. Always surface when enabled so
     // operators can see the current multiplier even at 1.0 (healthy).
     if (service.colonyConfig.adaptivePollEnabled) {

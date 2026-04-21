@@ -101,6 +101,8 @@ describe("loadColonyConfig", () => {
       dmMinKarma: 0,
       notificationDigest: "off",
       dmPromptMode: "none",
+      catchupThresholdMs: 30_000,
+      engageThreadCompression: "verbatim",
     });
   });
 

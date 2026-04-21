@@ -138,6 +138,8 @@ export interface FakeService {
     dmMinKarma?: number;
     notificationDigest?: "off" | "per-thread";
     dmPromptMode?: "none" | "peer" | "adversarial";
+    catchupThresholdMs?: number;
+    engageThreadCompression?: "verbatim" | "abridged";
   };
   draftQueue?: unknown;
   cooldown?: ReturnType<typeof vi.fn>;
@@ -163,10 +165,15 @@ export interface FakeService {
     llmCallsFailed?: number;
     notificationDigestsEmitted?: number;
     threadDigestsEmitted?: number;
+    rateLimitHits?: number;
+    catchupsTriggered?: number;
   };
   recordLlmCall?: ReturnType<typeof vi.fn>;
   computeLlmHealthMultiplier?: ReturnType<typeof vi.fn>;
   llmCallHistory?: Array<{ ts: number; outcome: "success" | "failure" }>;
+  rateLimitHistory?: Array<{ ts: number; source: string; retryAfter?: number }>;
+  recordRateLimitIfApplicable?: ReturnType<typeof vi.fn>;
+  rateLimitHitsInWindow?: ReturnType<typeof vi.fn>;
   pausedUntilTs?: number;
   pauseReason?: string | null;
   pauseForReason?: ReturnType<typeof vi.fn>;
@@ -264,6 +271,8 @@ export function fakeService(
       dmMinKarma: 0,
       notificationDigest: "off" as "off" | "per-thread",
       dmPromptMode: "none" as "none" | "peer" | "adversarial",
+      catchupThresholdMs: 0,
+      engageThreadCompression: "verbatim" as "verbatim" | "abridged",
       ...configOverrides,
     },
     cooldown: vi.fn((ms: number) => Date.now() + ms),
@@ -289,10 +298,15 @@ export function fakeService(
       llmCallsFailed: 0,
       notificationDigestsEmitted: 0,
       threadDigestsEmitted: 0,
+      rateLimitHits: 0,
+      catchupsTriggered: 0,
     },
     recordLlmCall: vi.fn(),
     computeLlmHealthMultiplier: vi.fn(() => 1.0),
     llmCallHistory: [],
+    rateLimitHistory: [],
+    recordRateLimitIfApplicable: vi.fn(),
+    rateLimitHitsInWindow: vi.fn(() => 0),
     pausedUntilTs: 0,
     pauseReason: null,
     pauseForReason: vi.fn((ms: number) => Date.now() + ms),

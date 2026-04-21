@@ -192,6 +192,35 @@ export interface ColonyConfig {
    */
   dmMinKarma: number;
   /**
+   * v0.28.0: catch-up mode. When an autonomy-loop tick (post / engagement)
+   * runs longer than `catchupThresholdMs`, the notification feed may have
+   * grown during the GPU-locked window. After such a tick, the plugin fires
+   * an immediate `interactionClient.tickNow()` to clear the backlog without
+   * waiting for the next scheduled poll interval.
+   *
+   * `0` disables the feature entirely (no timing overhead, no catch-up
+   * firings — preserves v0.27 behaviour). Default: 30000ms (30 s) — shorter
+   * than typical poll intervals, so a tick exceeding it genuinely indicates
+   * the feed is likely stale by comparison.
+   */
+  catchupThresholdMs: number;
+  /**
+   * v0.28.0: engagement-client thread-context compression. Controls how
+   * verbose each thread-comment entry is in the engagement prompt.
+   *
+   * - `"verbatim"` (default) — each comment body kept up to 500 chars,
+   *   full `[id=...]` tags. Preserves v0.27 behaviour exactly.
+   * - `"abridged"` — each comment body truncated to 150 chars; id tags
+   *   preserved (needed for `<reply_to>` threading) but formatting is
+   *   compact. Roughly 3–4× less prompt tokens for the thread context,
+   *   which matters for VRAM-constrained local agents with limited KV
+   *   cache. Does NOT call the model — pure prompt-layer compression.
+   *
+   * The number of comments fetched is still controlled by
+   * `engageThreadComments`; this knob changes how each one is rendered.
+   */
+  engageThreadCompression: "verbatim" | "abridged";
+  /**
    * v0.27.0: per-thread notification digest. Extends v0.22's type-level routing
    * (`notificationPolicy`) with an orthogonal thread-level dimension.
    *
@@ -655,6 +684,25 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     ? parsedDmMinKarma
     : 0;
 
+  // v0.28.0 — thread compression. Unknown values fail open to "verbatim"
+  // (preserves v0.27 behaviour).
+  const threadCompressRaw = getSetting(
+    runtime,
+    "COLONY_THREAD_COMPRESSION",
+    "verbatim",
+  )!.toLowerCase().trim();
+  const engageThreadCompression: "verbatim" | "abridged" =
+    threadCompressRaw === "abridged" ? "abridged" : "verbatim";
+
+  // v0.28.0 — catch-up mode threshold in ms. 0 = disabled (preserves v0.27
+  // behaviour). Default 30 s. Non-finite / negative → default.
+  const catchupRaw = getSetting(runtime, "COLONY_CATCHUP_THRESHOLD_SEC", "30")!;
+  const parsedCatchup = Number.parseInt(catchupRaw, 10);
+  const catchupThresholdMs =
+    Number.isFinite(parsedCatchup) && parsedCatchup >= 0
+      ? parsedCatchup * 1000
+      : 30_000;
+
   // v0.27.0 — per-thread notification digest. Unknown values fail open to "off"
   // (preserves v0.26 behaviour on typo).
   const notificationDigestRaw = getSetting(
@@ -754,6 +802,8 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     dmMinKarma,
     notificationDigest,
     dmPromptMode,
+    catchupThresholdMs,
+    engageThreadCompression,
   };
 }
 

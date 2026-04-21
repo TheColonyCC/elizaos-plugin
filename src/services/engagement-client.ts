@@ -118,6 +118,14 @@ export interface ColonyEngagementClientConfig {
    * is `medium` (raised from the v0.17 implicit `short`).
    */
   lengthTarget?: "short" | "medium" | "long";
+  /**
+   * v0.28.0: `verbatim` | `abridged`. Controls how thread comments are
+   * rendered in the engagement prompt. `abridged` truncates each comment
+   * body to a tight per-line budget; the comment count (from
+   * `threadComments`) and the `[id=...]` tags (needed for `<reply_to>`
+   * threading) are preserved. Pure prompt-layer — no extra model call.
+   */
+  threadCompression?: "verbatim" | "abridged";
   /** v0.20.0: source candidates from the trending/rising feed instead of per-colony `new`. */
   useRising?: boolean;
   /** v0.20.0: reorder eligible candidates by overlap with currently-trending tags. */
@@ -233,14 +241,36 @@ export class ColonyEngagementClient {
   private async loop(): Promise<void> {
     await this.sleep(this.nextDelay());
     while (this.isRunning) {
+      const startedAt = Date.now();
       try {
         await this.tick();
       } catch (err) {
         logger.warn(`COLONY_ENGAGEMENT_CLIENT tick failed: ${String(err)}`);
+        // v0.28.0: record rate-limit hits for STATUS / HEALTH_REPORT.
+        this.service.recordRateLimitIfApplicable?.(err, "engagement");
       }
+      // v0.28.0: catch-up trigger. Symmetric to post-client — a slow
+      // engagement tick means the notification feed may have piled up.
+      await this.maybeTriggerCatchup(Date.now() - startedAt);
       if (!this.isRunning) return;
       await this.sleep(this.nextDelay());
     }
+  }
+
+  /**
+   * v0.28.0 helper — fire an interaction-client catch-up if the tick
+   * exceeded the configured threshold.
+   */
+  private async maybeTriggerCatchup(elapsedMs: number): Promise<void> {
+    const threshold = this.service.colonyConfig?.catchupThresholdMs ?? 0;
+    if (threshold <= 0 || elapsedMs < threshold) return;
+    const ic = this.service.interactionClient;
+    if (!ic) return;
+    logger.info(
+      `COLONY_ENGAGEMENT_CLIENT: tick took ${elapsedMs}ms (≥ ${threshold}ms) — firing interaction catch-up`,
+    );
+    this.service.incrementStat?.("catchupsTriggered");
+    await ic.tickNow();
   }
 
   /**
@@ -255,6 +285,8 @@ export class ColonyEngagementClient {
       await this.tick();
     } catch (err) {
       logger.warn(`COLONY_ENGAGEMENT_CLIENT: tickNow failed: ${String(err)}`);
+      // v0.28.0: also record rate-limit hits from nudge-triggered ticks.
+      this.service.recordRateLimitIfApplicable?.(err, "engagement");
     }
   }
 
@@ -603,13 +635,22 @@ export class ColonyEngagementClient {
     const title = post.title ?? "(untitled)";
     const body = (post.body ?? "").slice(0, 1500);
 
+    // v0.28.0: thread-context compression. `verbatim` preserves the v0.27
+    // formatting (500 char body budget); `abridged` truncates each body to
+    // 150 chars so VRAM-constrained agents keep more KV-cache headroom.
+    // Comment count and id tags are unchanged in either mode — the count
+    // is already governed by `threadComments` config and the ids are
+    // load-bearing for `<reply_to>` threading.
+    const compression = this.config.threadCompression ?? "verbatim";
+    const bodyBudget = compression === "abridged" ? 150 : 500;
+    const headerNote = compression === "abridged" ? " [abridged]" : "";
     const threadContext = threadComments.length
       ? [
           "",
-          `Recent comments on the thread (${threadComments.length}):`,
+          `Recent comments on the thread (${threadComments.length})${headerNote}:`,
           ...threadComments.map((c, i) => {
             const commenter = c.author?.username ?? "unknown";
-            const text = (c.body ?? "").slice(0, 500);
+            const text = (c.body ?? "").slice(0, bodyBudget);
             const idTag = c.id ? ` [id=${c.id}]` : "";
             return `${i + 1}. @${commenter}${idTag}: ${text}`;
           }),
