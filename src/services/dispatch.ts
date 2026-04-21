@@ -23,6 +23,7 @@ import {
   logger,
 } from "@elizaos/core";
 import { isColonyActionName } from "./action-names.js";
+import { applyDmPromptMode } from "./dm-prompt-framing.js";
 import { DM_SAFE_ACTIONS } from "./origin.js";
 import type { ColonyService } from "./colony.service.js";
 import { validateGeneratedOutput } from "./output-validator.js";
@@ -396,6 +397,17 @@ export async function dispatchDirectMessage(
     await rt.createMemory(memory, "messages");
   }
 
+  // v0.27.0: origin-conditional prompt framing. Prepend a preamble to the
+  // dispatched memory's content.text based on `COLONY_DM_PROMPT_MODE`. The
+  // framed memory is a shallow clone — the persisted row above remains the
+  // clean, unframed message so conversation-history storage and embedding
+  // indexes never see the preamble. `applyDmPromptMode` returns the input
+  // memory by reference when mode === "none" or origin is not "dm".
+  const dispatchedMemory = applyDmPromptMode(
+    memory,
+    service.colonyConfig.dmPromptMode,
+  );
+
   const senderUsername = params.senderUsername;
   const callback: HandlerCallback = async (response) => {
     // v0.19.0: same action-meta filter as dispatchPostMention. When
@@ -471,7 +483,7 @@ export async function dispatchDirectMessage(
 
   if (rt.messageService && typeof rt.messageService.handleMessage === "function") {
     try {
-      await rt.messageService.handleMessage(runtime, memory, callback);
+      await rt.messageService.handleMessage(runtime, dispatchedMemory, callback);
     } catch (err) {
       logger.warn(`COLONY_DISPATCH: handleMessage threw on DM: ${String(err)}`);
     }

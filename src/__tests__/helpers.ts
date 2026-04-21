@@ -136,6 +136,8 @@ export interface FakeService {
     adaptivePollMaxMultiplier?: number;
     adaptivePollWarnThreshold?: number;
     dmMinKarma?: number;
+    notificationDigest?: "off" | "per-thread";
+    dmPromptMode?: "none" | "peer" | "adversarial";
   };
   draftQueue?: unknown;
   cooldown?: ReturnType<typeof vi.fn>;
@@ -160,6 +162,7 @@ export interface FakeService {
     llmCallsSuccess?: number;
     llmCallsFailed?: number;
     notificationDigestsEmitted?: number;
+    threadDigestsEmitted?: number;
   };
   recordLlmCall?: ReturnType<typeof vi.fn>;
   computeLlmHealthMultiplier?: ReturnType<typeof vi.fn>;
@@ -259,6 +262,8 @@ export function fakeService(
       adaptivePollMaxMultiplier: 4.0,
       adaptivePollWarnThreshold: 0.25,
       dmMinKarma: 0,
+      notificationDigest: "off" as "off" | "per-thread",
+      dmPromptMode: "none" as "none" | "peer" | "adversarial",
       ...configOverrides,
     },
     cooldown: vi.fn((ms: number) => Date.now() + ms),
@@ -283,6 +288,7 @@ export function fakeService(
       llmCallsSuccess: 0,
       llmCallsFailed: 0,
       notificationDigestsEmitted: 0,
+      threadDigestsEmitted: 0,
     },
     recordLlmCall: vi.fn(),
     computeLlmHealthMultiplier: vi.fn(() => 1.0),

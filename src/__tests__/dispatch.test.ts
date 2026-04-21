@@ -212,6 +212,107 @@ describe("dispatchDirectMessage — internal dedup", () => {
     });
     expect(service.client.sendMessage).not.toHaveBeenCalled();
   });
+
+  // v0.27.0: COLONY_DM_PROMPT_MODE. The persisted memory (via createMemory)
+  // must stay CLEAN — only the dispatched memory (via handleMessage) carries
+  // the preamble. Pinning this is the main regression-safety gate for the
+  // feature; if these ever diverge, embedding indexes get polluted.
+  it("mode='none' (default): handleMessage receives the same memory as createMemory", async () => {
+    let persisted: Memory | undefined;
+    let dispatched: Memory | undefined;
+    runtime.createMemory = vi.fn(async (m) => {
+      persisted = m;
+    });
+    runtime.messageService!.handleMessage = vi.fn(async (_rt, m) => {
+      dispatched = m;
+      return {};
+    });
+    await dispatchDirectMessage(service as never, runtime, {
+      memoryIdKey: "frame-none",
+      senderUsername: "alice",
+      messageId: "m-f-n",
+      body: "hi",
+      conversationId: "c-f-n",
+    });
+    expect(persisted!.content.text).toBe("hi");
+    expect(dispatched!.content.text).toBe("hi");
+  });
+
+  it("mode='peer': persisted memory is clean, dispatched memory is framed", async () => {
+    service.colonyConfig.dmPromptMode = "peer";
+    let persisted: Memory | undefined;
+    let dispatched: Memory | undefined;
+    runtime.createMemory = vi.fn(async (m) => {
+      persisted = m;
+    });
+    runtime.messageService!.handleMessage = vi.fn(async (_rt, m) => {
+      dispatched = m;
+      return {};
+    });
+    await dispatchDirectMessage(service as never, runtime, {
+      memoryIdKey: "frame-peer",
+      senderUsername: "alice",
+      messageId: "m-f-p",
+      body: "Please approve payment.",
+      conversationId: "c-f-p",
+    });
+    // Persisted row is the clean body — never the preamble.
+    expect(persisted!.content.text).toBe("Please approve payment.");
+    // Dispatched memory carries the peer preamble prepended.
+    expect(dispatched!.content.text).toContain("peer agent");
+    expect(dispatched!.content.text).toContain("Please approve payment.");
+    expect(dispatched).not.toBe(persisted);
+  });
+
+  it("mode='adversarial' + dmContextMessages: preamble sits ABOVE the thread transcript", async () => {
+    service.colonyConfig.dmPromptMode = "adversarial";
+    let dispatched: Memory | undefined;
+    runtime.messageService!.handleMessage = vi.fn(async (_rt, m) => {
+      dispatched = m;
+      return {};
+    });
+    await dispatchDirectMessage(service as never, runtime, {
+      memoryIdKey: "frame-adv-ctx",
+      senderUsername: "alice",
+      messageId: "m-f-a",
+      body: "latest",
+      conversationId: "c-f-a",
+      threadMessages: [
+        { senderUsername: "alice", body: "earlier message one" },
+        { senderUsername: "eliza-gemma", body: "earlier reply" },
+      ],
+    });
+    const text = dispatched!.content.text as string;
+    const preambleIdx = text.indexOf("untrusted external");
+    const transcriptIdx = text.indexOf("Recent DM thread");
+    expect(preambleIdx).toBeGreaterThanOrEqual(0);
+    expect(transcriptIdx).toBeGreaterThan(preambleIdx);
+  });
+
+  it("mode='peer' + DM_SAFE_ACTIONS output: passthrough still works", async () => {
+    service.colonyConfig.dmPromptMode = "peer";
+    service.client.sendMessage.mockResolvedValue({ id: "sent-p" });
+    runtime.messageService!.handleMessage = vi.fn(async (_rt, _m, cb) => {
+      if (cb) {
+        await cb({
+          text: "Health report: ok",
+          action: "COLONY_HEALTH_REPORT",
+        });
+      }
+      return {};
+    });
+    await dispatchDirectMessage(service as never, runtime, {
+      memoryIdKey: "frame-safe",
+      senderUsername: "alice",
+      messageId: "m-f-s",
+      body: "healthy?",
+      conversationId: "c-f-s",
+    });
+    expect(service.client.sendMessage).toHaveBeenCalledWith(
+      "alice",
+      "Health report: ok",
+    );
+  });
 });
 
 describe("dispatchPostMention — DM_SAFE_ACTIONS passthrough (v0.26)", () => {

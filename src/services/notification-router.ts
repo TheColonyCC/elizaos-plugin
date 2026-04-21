@@ -244,6 +244,192 @@ export class NotificationDigestBuffer {
 }
 
 /**
+ * v0.27.0 — per-thread digest buffer.
+ *
+ * Complements `NotificationDigestBuffer` (which groups by `type` across the whole
+ * feed) with a second pass that groups *dispatch-bound* notifications by `post_id`.
+ * Only notifications the v0.22 policy resolved to `dispatch` reach this buffer — so
+ * by the time we get here, the type-level router has already decided these events
+ * warrant inference. Our job is to stop three replies on the same post from each
+ * firing a separate `handleMessage` tick.
+ *
+ * Semantics:
+ *   - `stage(notification)` appends to a per-post bucket. Nothing is written yet.
+ *   - `groupByPost()` exposes the buckets so the caller can distinguish singletons
+ *     (fall through to normal `processNotification` — no digest) from ≥ 2
+ *     entries (flush as a single digest Memory).
+ *   - `flushGroup(runtime, service, postId, staged, post)` writes ONE Memory via
+ *     `runtime.createMemory` (no `handleMessage`, no inference cost) and bumps
+ *     `threadDigestsEmitted`.
+ *
+ * Fails open on `createMemory` errors (returns null; caller should leave notifs
+ * unread so they get another shot next tick).
+ */
+export interface StagedThreadNotification {
+  /** Notification id — needed to mark-read after successful flush. */
+  id: string;
+  /** Post id the notification references (non-null by precondition). */
+  postId: string;
+  /** Normalised notification type (e.g. `"mention"`, `"reply_to_comment"`). */
+  type: string;
+  /** Actor username when available — threaded into the digest's "from" line. */
+  actor?: string;
+}
+
+export interface ThreadDigestPost {
+  title?: string;
+}
+
+export class ThreadDigestBuffer {
+  private readonly byPost = new Map<string, StagedThreadNotification[]>();
+
+  /** Stage a notification for thread-level digesting. */
+  stage(entry: StagedThreadNotification): void {
+    const bucket = this.byPost.get(entry.postId);
+    if (bucket) {
+      bucket.push(entry);
+    } else {
+      this.byPost.set(entry.postId, [entry]);
+    }
+  }
+
+  /** True when no notifications have been staged. */
+  isEmpty(): boolean {
+    return this.byPost.size === 0;
+  }
+
+  /**
+   * Returns the per-post buckets so the caller can iterate and decide how to
+   * flush each (singleton → `processNotification`, ≥ 2 → `flushGroup`).
+   */
+  groupByPost(): ReadonlyMap<string, ReadonlyArray<StagedThreadNotification>> {
+    return this.byPost;
+  }
+
+  /**
+   * Flush a single post's staged notifications as one digest Memory.
+   *
+   * `post` is optional — when the caller's `getPost` fetch failed, pass `null`
+   * and the digest will fall back to rendering with the raw post id.
+   *
+   * Returns the created memory id on success, `null` on empty input or on
+   * `createMemory` failure. Empty input is a no-op (the caller shouldn't be
+   * calling this with 0 entries, but we're defensive).
+   */
+  async flushGroup(
+    runtime: IAgentRuntime,
+    service: ColonyService,
+    postId: string,
+    staged: ReadonlyArray<StagedThreadNotification>,
+    post: ThreadDigestPost | null,
+  ): Promise<string | null> {
+    if (staged.length === 0) return null;
+
+    const title = post?.title?.trim() || "";
+    const header = title ? `Thread '${title}'` : `Thread ${postId}`;
+
+    // Render "3 new replies + 1 mention" when types differ; "3 new mentions"
+    // when they all match. Count by normalised type.
+    const typeCounts = new Map<string, number>();
+    for (const s of staged) {
+      typeCounts.set(s.type, (typeCounts.get(s.type) ?? 0) + 1);
+    }
+    const parts: string[] = [];
+    for (const [t, count] of typeCounts) {
+      parts.push(renderThreadType(t, count));
+    }
+    const summary = parts.join(" + ");
+
+    // Actor hint: same rule as v0.22's type-digest — 1-3 inline, 4+ anonymised count.
+    const actors = new Set<string>();
+    for (const s of staged) {
+      if (s.actor) actors.add(s.actor);
+    }
+    const actorHint =
+      actors.size > 0 && actors.size <= 3
+        ? ` (from ${Array.from(actors).map((a) => `@${a}`).join(", ")})`
+        : actors.size > 3
+          ? ` (from ${actors.size} agents)`
+          : "";
+
+    const text = `${header}: ${summary}${actorHint}`;
+
+    const rt = runtime as unknown as {
+      agentId?: string;
+      createMemory?: (m: Memory, table: string) => Promise<void>;
+    };
+    const agentId = rt.agentId ?? "agent";
+    // Stable dedup key: same post + same set of notif ids → same memory id.
+    const sortedIds = staged.map((s) => s.id).sort().join("+");
+    const memoryId = createUniqueUuid(
+      runtime,
+      `colony-thread-digest-${postId}-${sortedIds}`,
+    );
+    // Share the post's roomId with v0.21's dispatchPostMention so any
+    // future conversation-history UI groups digests with individual posts.
+    const roomId = createUniqueUuid(runtime, `colony-post-${postId}`);
+
+    const memory: Memory = {
+      id: memoryId as Memory["id"],
+      entityId: agentId as Memory["entityId"],
+      agentId: agentId as Memory["agentId"],
+      roomId: roomId as Memory["roomId"],
+      content: {
+        text,
+        source: "colony",
+        url: `https://thecolony.cc/post/${postId}`,
+        // v0.27.0: plugin-generated composite, not a user action — tag as
+        // autonomous. Downstream action guards only refuse `"dm"`, so this
+        // is correct for both the v0.21 refuseDmOrigin check and any future
+        // provider/consumer that discriminates on origin.
+        colonyOrigin: "autonomous" as never,
+        colonyDigest: true as never,
+        colonyThreadDigest: true as never,
+      },
+      createdAt: Date.now(),
+    };
+
+    if (typeof rt.createMemory === "function") {
+      try {
+        await rt.createMemory(memory, "messages");
+      } catch (err) {
+        logger.warn(
+          `COLONY_NOTIFICATION_ROUTER: thread digest write failed for post ${postId}: ${String(err)}`,
+        );
+        return null;
+      }
+    }
+
+    service.incrementStat?.("threadDigestsEmitted");
+    service.recordActivity?.(
+      "post_created",
+      title || postId,
+      `thread_digest ${postId} ×${staged.length}`,
+    );
+    logger.info(
+      `COLONY_NOTIFICATION_ROUTER: emitted thread digest for post ${postId} (${staged.length} notifs)`,
+    );
+    return String(memoryId);
+  }
+}
+
+/**
+ * Render a per-type fragment for a thread digest ("3 replies", "1 mention").
+ * Unknown types fall back to the raw name so we never silently swallow a type.
+ */
+function renderThreadType(type: string, count: number): string {
+  switch (type) {
+    case "mention":
+      return `${count} mention${count === 1 ? "" : "s"}`;
+    case "reply_to_comment":
+    case "reply_to_my_comment":
+      return `${count} ${count === 1 ? "reply" : "replies"}`;
+    default:
+      return `${count} ${type} event${count === 1 ? "" : "s"}`;
+  }
+}
+
+/**
  * Render a human-readable label for a single bucket. Handles the common
  * types specifically so the digest reads well; falls back to a generic
  * "N new <type>" for unknown shapes.

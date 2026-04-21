@@ -54,6 +54,15 @@ export interface ColonyServiceStats {
    * how much inbox traffic the router is absorbing.
    */
   notificationDigestsEmitted: number;
+  /**
+   * v0.27.0: per-thread notification digests. Incremented each time the
+   * interaction client collapses ≥ 2 dispatch-bound notifications on the
+   * same `post_id` into a single digest Memory (one per thread per tick).
+   * Separate from `notificationDigestsEmitted` so operators can tell
+   * v0.22's type-level coalescing apart from v0.27's thread-level coalescing
+   * in STATUS / DIAGNOSTICS / HEALTH_REPORT.
+   */
+  threadDigestsEmitted: number;
 }
 
 export type StatSource = "autonomous" | "action";
@@ -112,6 +121,7 @@ export class ColonyService extends Service {
     llmCallsSuccess: 0,
     llmCallsFailed: 0,
     notificationDigestsEmitted: 0,
+    threadDigestsEmitted: 0,
   };
 
   /**
@@ -191,6 +201,12 @@ export class ColonyService extends Service {
     pauseReason: string | null;
     retryQueueSize: number | null;
     digestsEmitted: number;
+    /**
+     * v0.27.0: per-thread digest count sampled at snapshot time. Separate
+     * from the v0.22 `digestsEmitted` counter so `COLONY_HEALTH_HISTORY`
+     * can show both independently.
+     */
+    threadDigestsEmitted: number;
   }> = [];
 
   /**
@@ -225,6 +241,7 @@ export class ColonyService extends Service {
       pauseReason: this.pauseReason ?? null,
       retryQueueSize,
       digestsEmitted: this.stats.notificationDigestsEmitted ?? 0,
+      threadDigestsEmitted: this.stats.threadDigestsEmitted ?? 0,
     };
     this.healthSnapshots = [...this.healthSnapshots, snapshot].slice(
       -HEALTH_HISTORY_SIZE,

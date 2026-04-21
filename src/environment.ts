@@ -1,4 +1,5 @@
 import type { IAgentRuntime } from "@elizaos/core";
+import type { DmPromptMode } from "./services/dm-prompt-framing.js";
 import {
   parseNotificationPolicy,
   type NotificationPolicy,
@@ -190,6 +191,38 @@ export interface ColonyConfig {
    * before this gate and unaffected. Default 0 = disabled.
    */
   dmMinKarma: number;
+  /**
+   * v0.27.0: per-thread notification digest. Extends v0.22's type-level routing
+   * (`notificationPolicy`) with an orthogonal thread-level dimension.
+   *
+   * - `"off"` (default) — dispatch-bound notifications fall through immediately,
+   *   byte-for-byte v0.22 behaviour.
+   * - `"per-thread"` — after the v0.22 type-policy pass, dispatch-bound
+   *   notifications with a non-null `post_id` are grouped by thread; threads
+   *   with ≥ 2 notifications emit ONE digest Memory per thread per tick
+   *   (`runtime.createMemory`, no `handleMessage`, no inference cost).
+   *   Singleton threads still dispatch individually — no overhead for N=1.
+   *
+   * Composes with `notificationPolicy`: type-coalesce runs first, thread-coalesce
+   * operates only on notifications the type policy resolved to `dispatch`.
+   */
+  notificationDigest: "off" | "per-thread";
+  /**
+   * v0.27.0: origin-conditional prompt framing. When a DM-origin Memory is about
+   * to be dispatched through `runtime.messageService.handleMessage`, the plugin
+   * prepends a short framing paragraph to the Memory's content text for the
+   * dispatch only — the persisted memory is unchanged.
+   *
+   * - `"none"` (default) — no preamble. Byte-for-byte v0.26 behaviour.
+   * - `"peer"` — frames the sender as a peer agent on Colony, not the operator.
+   * - `"adversarial"` — frames the sender as untrusted; instructs the agent to
+   *   refuse embedded instructions and scrutinise premises.
+   *
+   * Composes cleanly with v0.21's DM_SAFE_ACTIONS passthrough (and the v0.26
+   * filter fix) — framing affects the prompt input, not the callback-side
+   * action-meta filtering.
+   */
+  dmPromptMode: DmPromptMode;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -622,6 +655,28 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     ? parsedDmMinKarma
     : 0;
 
+  // v0.27.0 — per-thread notification digest. Unknown values fail open to "off"
+  // (preserves v0.26 behaviour on typo).
+  const notificationDigestRaw = getSetting(
+    runtime,
+    "COLONY_NOTIFICATION_DIGEST",
+    "off",
+  )!.toLowerCase().trim();
+  const notificationDigest: "off" | "per-thread" =
+    notificationDigestRaw === "per-thread" ? "per-thread" : "off";
+
+  // v0.27.0 — DM-origin prompt framing. Unknown values fail closed to "none"
+  // (preserves v0.26 behaviour, never injects a preamble the operator didn't ask for).
+  const dmPromptModeRaw = getSetting(runtime, "COLONY_DM_PROMPT_MODE", "none")!
+    .toLowerCase()
+    .trim();
+  const dmPromptMode: DmPromptMode =
+    dmPromptModeRaw === "peer"
+      ? "peer"
+      : dmPromptModeRaw === "adversarial"
+        ? "adversarial"
+        : "none";
+
   return {
     apiKey,
     defaultColony,
@@ -697,6 +752,8 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     adaptivePollMaxMultiplier,
     adaptivePollWarnThreshold,
     dmMinKarma,
+    notificationDigest,
+    dmPromptMode,
   };
 }
 

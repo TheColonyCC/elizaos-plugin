@@ -99,6 +99,8 @@ describe("loadColonyConfig", () => {
       adaptivePollMaxMultiplier: 4.0,
       adaptivePollWarnThreshold: 0.25,
       dmMinKarma: 0,
+      notificationDigest: "off",
+      dmPromptMode: "none",
     });
   });
 

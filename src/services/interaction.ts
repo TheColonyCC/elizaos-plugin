@@ -7,6 +7,7 @@ import {
 } from "./dispatch.js";
 import {
   NotificationDigestBuffer,
+  ThreadDigestBuffer,
   resolveNotificationPolicy,
 } from "./notification-router.js";
 import { handleOperatorCommand } from "./operator-commands.js";
@@ -167,9 +168,15 @@ export class ColonyInteractionClient {
   private async tick(): Promise<void> {
     const ignoreTypes = this.service.colonyConfig.notificationTypesIgnore;
     const policyMap = this.service.colonyConfig.notificationPolicy;
+    const threadDigestEnabled =
+      this.service.colonyConfig.notificationDigest === "per-thread";
     // v0.22.0: per-tick digest buffer for coalesced types. Flushed as a
     // single summary memory at the bottom of the tick.
     const digest = new NotificationDigestBuffer();
+    // v0.27.0: per-tick thread buffer — only used when `notificationDigest`
+    // is `per-thread`. Collects dispatch-bound notifications with a post_id
+    // so threads with ≥ 2 events can collapse to one digest Memory.
+    const threadDigest = threadDigestEnabled ? new ThreadDigestBuffer() : null;
     const notifications = (await this.service.client.getNotifications()) as unknown as Notification[];
     for (const notification of notifications) {
       if (!this.isRunning) return;
@@ -193,10 +200,68 @@ export class ColonyInteractionClient {
         await this.markRead(notification.id);
         continue;
       }
-      // policy === "dispatch" (v0.21 behaviour)
+      // policy === "dispatch"
+      // v0.27.0: when thread-digest is enabled AND the notification has a
+      // post_id, stage for grouping instead of dispatching immediately.
+      // Notifications with null post_id (follows, tips, key-rotation) still
+      // fall through — thread-grouping requires a thread to group by.
+      if (threadDigest && notification.post_id) {
+        threadDigest.stage({
+          id: notification.id,
+          postId: notification.post_id,
+          type: typeKey,
+          actor: notification.actor?.username,
+        });
+        continue;
+      }
       await this.processNotification(notification);
     }
     await digest.flush(this.runtime, this.service);
+
+    // v0.27.0: second-pass thread flush. Singletons fall through to normal
+    // dispatch (preserving v0.26 behaviour for threads with one notif);
+    // threads with ≥ 2 get one digest Memory.
+    if (threadDigest && !threadDigest.isEmpty()) {
+      for (const [postId, staged] of threadDigest.groupByPost()) {
+        if (!this.isRunning) return;
+        if (staged.length === 1) {
+          const [single] = staged;
+          // Reconstruct the minimal Notification shape processNotification needs.
+          const original = notifications.find((n) => n.id === single!.id);
+          if (original) {
+            await this.processNotification(original);
+          }
+          continue;
+        }
+        // ≥ 2 notifications on the same post → one digest memory.
+        let post: PostLike | null = null;
+        try {
+          post = (await (this.service.client as unknown as {
+            getPost: (id: string) => Promise<PostLike>;
+          }).getPost(postId)) as PostLike;
+        } catch (err) {
+          logger.debug(
+            `COLONY_INTERACTION: getPost(${postId}) failed during thread digest — rendering with raw id: ${String(err)}`,
+          );
+        }
+        const memoryId = await threadDigest.flushGroup(
+          this.runtime,
+          this.service,
+          postId,
+          staged,
+          post,
+        );
+        // Mark each notif read only after the digest write succeeds — a
+        // thrown createMemory leaves them unread so they'll be re-picked
+        // next tick.
+        if (memoryId !== null) {
+          for (const s of staged) {
+            await this.markRead(s.id);
+          }
+        }
+      }
+    }
+
     if (!this.isRunning) return;
     await this.tickDMs();
   }
