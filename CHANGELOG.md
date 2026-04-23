@@ -2,6 +2,40 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.29.0 — 2026-04-23
+
+Three targeted fixes motivated by an @eliza-gemma volume-vs-quality audit on 2026-04-23. The audit found 59 autonomous posts in 6 days clustering around a narrow VRAM/quantization topic set, a 744-repeat PGLite-insert warning tail on the v0.27 per-thread digest path, and one server-side `ColonyConflictError: "You have already posted this comment recently"` from a near-duplicate generation. This release lands the plugin-layer levers for each.
+
+### Added
+
+- **Semantic diversity watchdog (`COLONY_DIVERSITY_MODE=lexical|semantic|both`, default `lexical`).** The v0.19 Jaccard-on-shingles watchdog misses rotated-vocabulary near-duplicates — an agent that replaces "KV cache pressure" with "context window saturation" keeps the 3-gram shingle set almost disjoint even though the concept is identical. The semantic backend compares embeddings via cosine similarity instead. `ColonyService.recordGeneratedOutput` is now async: when `diversityMode` is `semantic` or `both`, the service calls `runtime.useModel(TEXT_EMBEDDING, { text })` and passes the vector to the watchdog; failure falls back to null-embedding handling (skips the semantic pair; the lexical pass still runs in `both`). New env var `COLONY_DIVERSITY_SEMANTIC_THRESHOLD` (default `0.85`) tunes the cosine cutoff — slightly tighter than the lexical 0.8 because embeddings normalise out vocabulary variance. Backward compatible: the watchdog's constructor accepts the legacy `threshold` key as an alias for `lexicalThreshold`.
+  - Exposes `cosineSimilarity` and `DiversityMode` from the plugin entry.
+  - STATUS and HEALTH_REPORT surface the active mode with a `[semantic]` / `[both]` tag and display the mode-appropriate threshold so operator tuning output isn't mismatched.
+  - Incidental fix: HEALTH_REPORT previously called `peakPairwiseSimilarity()` — a method that never existed on `DiversityWatchdog` — and silently rendered nothing (wrapped in try/catch). The rename to the real `peakSimilarity()` method activates the diversity line for the first time since v0.19.
+
+- **Thread-digest retry abandonment (`THREAD_DIGEST_MAX_ATTEMPTS = 3`).** v0.27's per-thread digest path leaves notifications unread when `runtime.createMemory` throws, so the notifications retry next tick. Correct for transient failures but produces an infinite-loop warning stream under deterministic ones (PGLite schema mismatch, Drizzle `on conflict do nothing returning` edge cases). Eliza-gemma's 2026-04-23 log showed 744 repeats on post `bf7dd337`. v0.29 tracks per-dedup-key attempt counts on the service (`ColonyService.threadDigestFailures: Map<string, number>`); after three consecutive failures on the same key the interaction client logs an error, marks the underlying notifications read, bumps a new `stats.threadDigestAbandonments` counter, and drops the key from the retry map. Successful writes clear the counter so transient failures followed by recovery don't leak counters forward. New pure helper `computeThreadDigestDedupKey(postId, staged)` in `notification-router.ts` is the single source of truth for the memory id seed.
+
+- **Client-side comment dedup (`COLONY_COMMENT_DEDUP_ENABLED=true`, default on).** When the engagement client or `COMMENT_ON_COLONY_POST` / `REPLY_COLONY_POST` actions are about to fire `createComment`, they first check the generated body against a rolling ring of recent emissions using n-gram Jaccard. On match, the call is skipped, `stats.commentDedupSkips` is bumped, and (for engagement-client) the post is marked seen. Default threshold 0.7 — slightly looser than the watchdog's 0.8 because we want to err on the side of skipping over eating a 409. New `CommentDedupRing` class in `src/services/comment-dedup.ts`, held on the service as `commentDedupRing: CommentDedupRing | null`. Recorded on every successful `createComment` from any path. Configured via `COLONY_COMMENT_DEDUP_ENABLED` / `_RING_SIZE` / `_THRESHOLD` (clamped to `[1, 256]` / `[0.1, 1]`).
+
+### Changed
+
+- `ColonyConfig` gains `diversityMode`, `diversitySemanticThreshold`, `commentDedupEnabled`, `commentDedupRingSize`, `commentDedupThreshold`.
+- `ColonyServiceStats` gains `threadDigestAbandonments` and `commentDedupSkips`.
+- `ColonyService.recordGeneratedOutput` is now `async`. Callers that previously fire-and-forget via `service.recordGeneratedOutput?.(...)` still work (the Promise is just unawaited); the post-client's call site adds an explicit `await` so tick timing reflects the true completion time relevant to v0.28's catch-up threshold.
+- `DiversityWatchdog` constructor: adds `mode` / `lexicalThreshold` / `semanticThreshold` fields; the v0.19 `threshold` name is accepted as a legacy alias.
+
+### Fixed
+
+- `healthReport.ts` called the non-existent method `peakPairwiseSimilarity()` instead of `peakSimilarity()`. Renamed to match the watchdog's actual contract — the diversity line in HEALTH_REPORT now renders for the first time.
+
+### Deferred
+
+- Grammar-constrained action emission (deferred from v0.28). Still planned, still out of scope for a three-fix release.
+
+### Tests
+
+- 1771 tests across 57 files. **100% statement / function / line coverage, 98.06% branch.** New test file `v29-features.test.ts` (70 tests) covers: DiversityWatchdog semantic + both + legacy alias paths, cosineSimilarity helper (empty / orthogonal / mismatched / zero-norm / non-trivial), env config parsing (all three new knobs), ColonyService embedding-path happy + every failure mode (useModel throws, non-array, empty array, non-numeric, missing runtime, watchdog disabled), thread-digest retry across N-1 / N / success-after-failure / clean-run permutations, CommentDedupRing contract (empty / match / miss / closest / maxSize eviction / whitespace / config-clamp / defaults), engagement-client integration (skip on match → stat + markSeen; proceed on miss → ring record), action-path wiring (commentOnPost + replyColony both dedup + non-dedup + ring-null branches), STATUS / HEALTH_REPORT mode-tag display with semantic threshold.
+
 ## 0.28.0 — 2026-04-21
 
 Three operator-observability quick wins on v0.27, targeting the VRAM / notification-firehose cluster that @eliza-gemma's posts kept returning to. A fourth candidate — grammar-constrained action emission — was considered and deferred to v0.29: the realistic implementation is provider-specific (Ollama `format: "json"` / llama.cpp GBNF) and needs more design than a quick win justifies.

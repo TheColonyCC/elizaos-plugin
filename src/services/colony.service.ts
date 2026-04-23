@@ -1,4 +1,9 @@
-import { Service, type IAgentRuntime, logger } from "@elizaos/core";
+import {
+  Service,
+  type IAgentRuntime,
+  logger,
+  ModelType,
+} from "@elizaos/core";
 import { ColonyClient } from "@thecolony/sdk";
 import { loadColonyConfig, type ColonyConfig } from "../environment.js";
 import { ColonyInteractionClient } from "./interaction.js";
@@ -7,6 +12,7 @@ import { ColonyEngagementClient } from "./engagement-client.js";
 import { checkOllamaReadiness, validateCharacter } from "../utils/readiness.js";
 import { DraftQueue } from "./draft-queue.js";
 import { DiversityWatchdog } from "./diversity-watchdog.js";
+import { CommentDedupRing } from "./comment-dedup.js";
 
 /**
  * Why the service is currently paused. Surfaced in COLONY_STATUS so
@@ -75,6 +81,26 @@ export interface ColonyServiceStats {
    * notification backlog that accumulated during the GPU-locked window.
    */
   catchupsTriggered: number;
+  /**
+   * v0.29.0: thread digests given up on. Incremented when a thread
+   * digest `createMemory` write has failed `THREAD_DIGEST_MAX_ATTEMPTS`
+   * times on the same dedup key — the plugin then marks the underlying
+   * notifications read to clear the backlog, and bumps this counter so
+   * operators can see that something deterministic is failing downstream
+   * (PGLite / Drizzle schema mismatch, runtime createMemory throwing,
+   * etc.) instead of silently spinning forever. Expected to stay 0 on
+   * healthy runs.
+   */
+  threadDigestAbandonments: number;
+  /**
+   * v0.29.0: client-side comment-dedup skips. Incremented each time
+   * `CommentDedupRing.findDuplicate` matched a recent comment and the
+   * engagement / action path elected not to fire `createComment`.
+   * Zero on healthy runs where the agent generates distinct replies;
+   * non-zero means the plugin saved a round-trip that would otherwise
+   * have produced a `ColonyConflictError`.
+   */
+  commentDedupSkips: number;
 }
 
 /**
@@ -148,7 +174,24 @@ export class ColonyService extends Service {
     threadDigestsEmitted: 0,
     rateLimitHits: 0,
     catchupsTriggered: 0,
+    threadDigestAbandonments: 0,
+    commentDedupSkips: 0,
   };
+
+  /**
+   * v0.29.0 — per-dedup-key attempt counter for thread digests that
+   * fail to persist via `runtime.createMemory`. Keyed by the same
+   * deterministic memory id the ThreadDigestBuffer generates
+   * (`colony-thread-digest-${postId}-${sortedNotifIds}`), so retries on
+   * the identical notification set accumulate. After
+   * `THREAD_DIGEST_MAX_ATTEMPTS` consecutive failures the interaction
+   * client gives up, marks the notifications read anyway, bumps
+   * `stats.threadDigestAbandonments`, and removes the key from this
+   * map. Successful writes also remove the key. Prevents the
+   * 744-warnings-per-log infinite retry observed in eliza-gemma's
+   * production log on bf7dd337 (2026-04-23).
+   */
+  public threadDigestFailures: Map<string, number> = new Map();
 
   /**
    * v0.28.0 — rolling ring of recent rate-limit hits. Capped at 50 entries
@@ -367,6 +410,15 @@ export class ColonyService extends Service {
   public activityLog: ActivityEntry[] = [];
   public draftQueue: DraftQueue | null = null;
   public diversityWatchdog: DiversityWatchdog | null = null;
+  /**
+   * v0.29.0: client-side comment-dedup ring. Populated on every
+   * successful `createComment` emission (engagement client,
+   * commentOnPost action, replyComment action). Queried before firing
+   * `createComment` so near-duplicate comments are skipped client-side
+   * rather than producing a round-trip `ColonyConflictError`. Null
+   * when the feature is disabled (`commentDedupEnabled: false`).
+   */
+  public commentDedupRing: CommentDedupRing | null = null;
   private signalHandlersRegistered: Array<{ sig: NodeJS.Signals; handler: () => void }> = [];
 
   /**
@@ -396,21 +448,62 @@ export class ColonyService extends Service {
    * diversity watchdog. Trips the semantic-repetition pause when the
    * last N outputs cluster above threshold. Safe to call even when
    * the watchdog is disabled (`diversityThreshold === 0`).
+   *
+   * v0.29.0: semantic mode. When `diversityMode` is `"semantic"` or
+   * `"both"`, compute a `TEXT_EMBEDDING` for `text` via `runtime.useModel`
+   * and pass it to the watchdog. If the embedding call fails or returns
+   * an unusable shape, pass `null` — the watchdog then falls back to the
+   * lexical check only (for `"both"`) or skips the semantic pair (for
+   * `"semantic"`), so an embedding outage doesn't silently mute the
+   * watchdog in `"both"` mode.
+   *
+   * Now async because the embedding call is async. Callers may fire-
+   * and-forget (`void service.recordGeneratedOutput(...)`) — the check
+   * is post-post and doesn't need to block the post loop.
    */
-  recordGeneratedOutput(text: string): void {
+  async recordGeneratedOutput(text: string): Promise<void> {
     if (!this.diversityWatchdog) return;
-    const tripped = this.diversityWatchdog.record(text);
+    const mode = this.colonyConfig.diversityMode;
+    let embedding: number[] | null = null;
+    if ((mode === "semantic" || mode === "both") && this.runtime) {
+      try {
+        // TEXT_EMBEDDING is valid at runtime (the core itself calls
+        // useModel(ModelType.TEXT_EMBEDDING, { text }) in memory
+        // embedding paths) but the public type overloads don't yet
+        // cover it — hence the dual `as never` cast.
+        const result = await this.runtime.useModel(
+          ModelType.TEXT_EMBEDDING as never,
+          { text } as never,
+        );
+        if (
+          Array.isArray(result) &&
+          result.length > 0 &&
+          typeof result[0] === "number"
+        ) {
+          embedding = result as number[];
+        }
+      } catch (err) {
+        logger.debug(
+          `COLONY_SERVICE: diversity embedding failed, falling back to lexical: ${String(err)}`,
+        );
+      }
+    }
+    const tripped = this.diversityWatchdog.record(text, embedding);
     if (!tripped) return;
     const peak = this.diversityWatchdog.peakSimilarity();
     this.diversityWatchdog.reset();
     const cooldownMs = this.colonyConfig.diversityCooldownMs;
+    const activeThreshold =
+      mode === "semantic"
+        ? this.colonyConfig.diversitySemanticThreshold
+        : this.colonyConfig.diversityThreshold;
     this.pauseForReason(
       cooldownMs,
       "semantic_repetition",
-      `last ${this.colonyConfig.diversityWindowSize} outputs ≥${Math.round(this.colonyConfig.diversityThreshold * 100)}% similar (peak ${Math.round(peak * 100)}%)`,
+      `last ${this.colonyConfig.diversityWindowSize} outputs ≥${Math.round(activeThreshold * 100)}% similar (peak ${Math.round(peak * 100)}%, mode=${mode})`,
     );
     logger.warn(
-      `⏸️  COLONY_SERVICE: diversity watchdog tripped — pausing autonomous posting for ${Math.round(cooldownMs / 60_000)}min (peak similarity ${Math.round(peak * 100)}%)`,
+      `⏸️  COLONY_SERVICE: diversity watchdog tripped (${mode}) — pausing autonomous posting for ${Math.round(cooldownMs / 60_000)}min (peak similarity ${Math.round(peak * 100)}%)`,
     );
   }
 
@@ -791,9 +884,24 @@ export class ColonyService extends Service {
     // positive on a topic cluster.
     if (service.colonyConfig.diversityThreshold > 0) {
       service.diversityWatchdog = new DiversityWatchdog({
+        mode: service.colonyConfig.diversityMode,
         ngram: service.colonyConfig.diversityNgram,
         windowSize: service.colonyConfig.diversityWindowSize,
-        threshold: service.colonyConfig.diversityThreshold,
+        lexicalThreshold: service.colonyConfig.diversityThreshold,
+        semanticThreshold: service.colonyConfig.diversitySemanticThreshold,
+      });
+    }
+
+    // v0.29.0: client-side comment dedup. Enabled by default — the
+    // server-side dedup is always active and the only downside of
+    // skipping a duplicate client-side is losing a comment that would
+    // have been rejected anyway. Disabled via
+    // COLONY_COMMENT_DEDUP_ENABLED=false for operators who want to
+    // verify the server-side behaviour instead of pre-empting it.
+    if (service.colonyConfig.commentDedupEnabled) {
+      service.commentDedupRing = new CommentDedupRing({
+        maxSize: service.colonyConfig.commentDedupRingSize,
+        threshold: service.colonyConfig.commentDedupThreshold,
       });
     }
 

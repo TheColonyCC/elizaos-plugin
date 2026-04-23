@@ -552,11 +552,31 @@ export class ColonyEngagementClient {
       return;
     }
 
+    // v0.29.0: client-side dedup pre-check. If the generated body is a
+    // near-duplicate of a recently-emitted comment, skip the round-trip
+    // that would produce a ColonyConflictError anyway. Non-blocking —
+    // when the ring is disabled (`commentDedupRing === null`), proceed
+    // unchanged.
+    const dedupRing = this.service.commentDedupRing;
+    if (dedupRing) {
+      const match = dedupRing.findDuplicate(content);
+      if (match) {
+        logger.info(
+          `🌐 COLONY_ENGAGEMENT_CLIENT: dedup skip on ${candidate.id} — generated body matches a recent comment (jaccard ${match.similarity.toFixed(2)})`,
+        );
+        await this.markSeen(candidate.id);
+        this.service.incrementStat?.("commentDedupSkips");
+        return;
+      }
+    }
+
     try {
       await this.service.client.createComment(candidate.id, content, parentCommentId);
       logger.info(
         `🌐 COLONY_ENGAGEMENT_CLIENT commented on post ${candidate.id} in c/${colony}${parentCommentId ? ` (threaded under ${parentCommentId.slice(0, 8)})` : ""}`,
       );
+      // v0.29.0: record the just-landed body in the dedup ring.
+      dedupRing?.record(content);
       await this.markSeen(candidate.id);
       this.service.incrementStat?.("commentsCreated", "autonomous");
       this.service.recordActivity?.(

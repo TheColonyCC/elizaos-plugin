@@ -105,12 +105,12 @@ export interface ColonyConfig {
    */
   engageLengthTarget: "short" | "medium" | "long";
   /**
-   * v0.19.0: content-diversity watchdog. Tracks Jaccard similarity of
-   * the last `diversityWindowSize` autonomous-post outputs; if all
-   * pairs exceed `diversityThreshold`, the post loop pauses for
-   * `diversityCooldownMs`. Defence against the "stuck in a rut"
-   * failure where a small local model falls into an attractor state
-   * and emits variants of the same post over and over.
+   * v0.19.0: content-diversity watchdog. Tracks similarity of the last
+   * `diversityWindowSize` autonomous-post outputs; if all pairs exceed
+   * the active-mode threshold, the post loop pauses for
+   * `diversityCooldownMs`. Defence against the "stuck in a rut" failure
+   * where a small local model falls into an attractor state and emits
+   * variants of the same post over and over.
    *
    * `diversityThreshold: 0` disables the watchdog entirely. Engagement
    * loop is NOT gated — replies to different posts are naturally
@@ -120,6 +120,65 @@ export interface ColonyConfig {
   diversityThreshold: number;
   diversityNgram: number;
   diversityCooldownMs: number;
+  /**
+   * v0.29.0: diversity watchdog backend mode.
+   *
+   * - `"lexical"` (default) — Jaccard similarity on n-gram shingles.
+   *   Byte-for-byte v0.19 – v0.28 behaviour. Catches surface-form
+   *   duplicates, misses rotated-vocabulary rephrasings of the same
+   *   concept.
+   * - `"semantic"` — cosine similarity between embedding vectors. The
+   *   caller computes the embedding via `runtime.useModel(TEXT_EMBEDDING)`
+   *   and the watchdog compares vectors. Catches concept-level
+   *   near-duplicates that Jaccard misses. Falls back to lexical if
+   *   the embedding call fails.
+   * - `"both"` — trips when EITHER check trips. Strictest; recommended
+   *   for agents with a documented monoculture tendency.
+   *
+   * Configured via `COLONY_DIVERSITY_MODE`. Unknown values fail open
+   * to `"lexical"`.
+   */
+  diversityMode: "lexical" | "semantic" | "both";
+  /**
+   * v0.29.0: client-side comment-dedup ring. When enabled, every
+   * `createComment` emission (engagement client, `COMMENT_ON_COLONY_POST`,
+   * `REPLY_COMMENT_ON_COLONY_POST`) first checks the generated body
+   * against the last N comments emitted from any path using n-gram
+   * Jaccard. Near-duplicates are skipped before the API round-trip,
+   * avoiding the `ColonyConflictError: You have already posted this
+   * comment recently` observed in the eliza-gemma log.
+   *
+   * Default `true`. Disable via `COLONY_COMMENT_DEDUP_ENABLED=false` to
+   * let the server-side dedup handle it instead (useful for operators
+   * verifying server behaviour).
+   */
+  commentDedupEnabled: boolean;
+  /**
+   * v0.29.0: how many recent comment bodies the dedup ring tracks.
+   * Default 16 (~30 min at eliza-gemma's engagement cadence).
+   * Configured via `COLONY_COMMENT_DEDUP_RING_SIZE`. Clamped [1, 256]
+   * — a larger ring inflates the per-check scan cost without adding
+   * useful precision.
+   */
+  commentDedupRingSize: number;
+  /**
+   * v0.29.0: Jaccard threshold for the dedup ring. Default 0.7
+   * (slightly looser than the DiversityWatchdog's 0.8 because we want
+   * to err on the side of skipping ambiguous near-duplicates rather
+   * than eating a 409). Configured via `COLONY_COMMENT_DEDUP_THRESHOLD`.
+   */
+  commentDedupThreshold: number;
+  /**
+   * v0.29.0: cosine-similarity threshold for semantic mode. Default
+   * `0.85`. Configured via `COLONY_DIVERSITY_SEMANTIC_THRESHOLD`. Only
+   * consulted when `diversityMode` is `"semantic"` or `"both"`.
+   *
+   * Slightly tighter than the lexical default (0.80) because embeddings
+   * normalise out the vocabulary variance that Jaccard wouldn't forgive
+   * anyway — two posts that genuinely cover the same concept will
+   * routinely hit 0.85+ cosine even with fully-rotated surface terms.
+   */
+  diversitySemanticThreshold: number;
   /**
    * v0.19.0: operator kill-switch via DM. When a DM arrives from a
    * username matching `operatorUsername` and starts with
@@ -632,6 +691,67 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
       ? parsedDiversityCooldown
       : 60) * 60_000;
 
+  // v0.29.0 — diversity backend mode (lexical | semantic | both)
+  const diversityModeRaw = getSetting(runtime, "COLONY_DIVERSITY_MODE", "lexical")!
+    .trim()
+    .toLowerCase();
+  const diversityMode: "lexical" | "semantic" | "both" =
+    diversityModeRaw === "semantic"
+      ? "semantic"
+      : diversityModeRaw === "both"
+        ? "both"
+        : "lexical";
+
+  const diversitySemanticThresholdRaw = getSetting(
+    runtime,
+    "COLONY_DIVERSITY_SEMANTIC_THRESHOLD",
+    "0.85",
+  )!;
+  const parsedDiversitySemanticThreshold = Number.parseFloat(
+    diversitySemanticThresholdRaw,
+  );
+  const diversitySemanticThreshold = Number.isFinite(
+    parsedDiversitySemanticThreshold,
+  )
+    ? Math.max(0, Math.min(1, parsedDiversitySemanticThreshold))
+    : 0.85;
+
+  // v0.29.0 — client-side comment dedup (defaults on)
+  const commentDedupEnabledRaw = getSetting(
+    runtime,
+    "COLONY_COMMENT_DEDUP_ENABLED",
+    "true",
+  )!.toLowerCase();
+  const commentDedupEnabled =
+    commentDedupEnabledRaw !== "false" &&
+    commentDedupEnabledRaw !== "0" &&
+    commentDedupEnabledRaw !== "no";
+
+  const commentDedupRingSizeRaw = getSetting(
+    runtime,
+    "COLONY_COMMENT_DEDUP_RING_SIZE",
+    "16",
+  )!;
+  const parsedCommentDedupRingSize = Number.parseInt(
+    commentDedupRingSizeRaw,
+    10,
+  );
+  const commentDedupRingSize = Number.isFinite(parsedCommentDedupRingSize)
+    ? Math.max(1, Math.min(256, parsedCommentDedupRingSize))
+    : 16;
+
+  const commentDedupThresholdRaw = getSetting(
+    runtime,
+    "COLONY_COMMENT_DEDUP_THRESHOLD",
+    "0.7",
+  )!;
+  const parsedCommentDedupThreshold = Number.parseFloat(
+    commentDedupThresholdRaw,
+  );
+  const commentDedupThreshold = Number.isFinite(parsedCommentDedupThreshold)
+    ? Math.max(0.1, Math.min(1, parsedCommentDedupThreshold))
+    : 0.7;
+
   // v0.19.0 — operator kill-switch
   const operatorUsername = getSetting(runtime, "COLONY_OPERATOR_USERNAME", "")!
     .trim()
@@ -790,6 +910,11 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     diversityThreshold,
     diversityNgram,
     diversityCooldownMs,
+    diversityMode,
+    diversitySemanticThreshold,
+    commentDedupEnabled,
+    commentDedupRingSize,
+    commentDedupThreshold,
     operatorUsername,
     operatorPrefix,
     dmContextMessages,

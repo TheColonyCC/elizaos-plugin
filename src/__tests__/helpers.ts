@@ -167,7 +167,11 @@ export interface FakeService {
     threadDigestsEmitted?: number;
     rateLimitHits?: number;
     catchupsTriggered?: number;
+    threadDigestAbandonments?: number;
+    commentDedupSkips?: number;
   };
+  threadDigestFailures?: Map<string, number>;
+  commentDedupRing?: unknown;
   recordLlmCall?: ReturnType<typeof vi.fn>;
   computeLlmHealthMultiplier?: ReturnType<typeof vi.fn>;
   llmCallHistory?: Array<{ ts: number; outcome: "success" | "failure" }>;
@@ -273,6 +277,11 @@ export function fakeService(
       dmPromptMode: "none" as "none" | "peer" | "adversarial",
       catchupThresholdMs: 0,
       engageThreadCompression: "verbatim" as "verbatim" | "abridged",
+      diversityMode: "lexical" as "lexical" | "semantic" | "both",
+      diversitySemanticThreshold: 0.85,
+      commentDedupEnabled: false,
+      commentDedupRingSize: 16,
+      commentDedupThreshold: 0.7,
       ...configOverrides,
     },
     cooldown: vi.fn((ms: number) => Date.now() + ms),
@@ -300,7 +309,11 @@ export function fakeService(
       threadDigestsEmitted: 0,
       rateLimitHits: 0,
       catchupsTriggered: 0,
+      threadDigestAbandonments: 0,
+      commentDedupSkips: 0,
     },
+    threadDigestFailures: new Map(),
+    commentDedupRing: null,
     recordLlmCall: vi.fn(),
     computeLlmHealthMultiplier: vi.fn(() => 1.0),
     llmCallHistory: [],

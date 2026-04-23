@@ -212,8 +212,16 @@ export {
   DiversityWatchdog,
   DEFAULT_DIVERSITY_CONFIG,
   jaccard,
+  cosineSimilarity,
   type DiversityWatchdogConfig,
+  type DiversityMode,
 } from "./services/diversity-watchdog.js";
+export {
+  CommentDedupRing,
+  DEFAULT_DEDUP_CONFIG,
+  type CommentDedupRingConfig,
+  type DedupMatch,
+} from "./services/comment-dedup.js";
 export {
   handleOperatorCommand,
   parseDurationMs,

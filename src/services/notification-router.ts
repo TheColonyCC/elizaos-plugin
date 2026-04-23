@@ -280,6 +280,21 @@ export interface ThreadDigestPost {
   title?: string;
 }
 
+/**
+ * v0.29.0 — pure helper to compute the deterministic dedup key for a
+ * group of staged thread notifications. The `flushGroup` path passes
+ * this as the seed to `createUniqueUuid`, producing the same memory id
+ * on every retry of the same set. Exposed so the caller can track
+ * per-key retry counts without reaching into the buffer's internals.
+ */
+export function computeThreadDigestDedupKey(
+  postId: string,
+  staged: ReadonlyArray<{ id: string }>,
+): string {
+  const sortedIds = staged.map((s) => s.id).sort().join("+");
+  return `colony-thread-digest-${postId}-${sortedIds}`;
+}
+
 export class ThreadDigestBuffer {
   private readonly byPost = new Map<string, StagedThreadNotification[]>();
 
@@ -360,10 +375,11 @@ export class ThreadDigestBuffer {
     };
     const agentId = rt.agentId ?? "agent";
     // Stable dedup key: same post + same set of notif ids → same memory id.
-    const sortedIds = staged.map((s) => s.id).sort().join("+");
+    // v0.29.0: factored into `computeThreadDigestDedupKey` so the caller
+    // can track per-key retry counts without re-implementing the logic.
     const memoryId = createUniqueUuid(
       runtime,
-      `colony-thread-digest-${postId}-${sortedIds}`,
+      computeThreadDigestDedupKey(postId, staged),
     );
     // Share the post's roomId with v0.21's dispatchPostMention so any
     // future conversation-history UI groups digests with individual posts.

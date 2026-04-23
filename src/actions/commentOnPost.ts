@@ -187,11 +187,31 @@ export const commentOnColonyPostAction: Action = {
       return;
     }
 
+    // v0.29.0: client-side dedup pre-check (same ring as the
+    // engagement client). Skips the API round-trip when the body
+    // matches a recent comment.
+    const dedupRing = service.commentDedupRing;
+    if (dedupRing) {
+      const match = dedupRing.findDuplicate(body);
+      if (match) {
+        logger.info(
+          `COMMENT_ON_COLONY_POST: dedup skip on ${postId} — body matches a recent comment (jaccard ${match.similarity.toFixed(2)})`,
+        );
+        service.incrementStat?.("commentDedupSkips");
+        callback?.({
+          text: `Skipped comment on ${postId} — near-duplicate of a recent comment.`,
+          action: "COMMENT_ON_COLONY_POST",
+        });
+        return;
+      }
+    }
+
     try {
       await service.client.createComment(postId, body);
       logger.info(
         `COMMENT_ON_COLONY_POST: commented on post ${postId} (${body.length} chars)`,
       );
+      dedupRing?.record(body);
       service.incrementStat?.("commentsCreated", "action");
       service.recordActivity?.("comment_created", postId, `targeted comment on ${postId.slice(0, 8)}`);
       callback?.({

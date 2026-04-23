@@ -164,18 +164,23 @@ export const colonyHealthReportAction: Action = {
       lines.push(`- Adaptive poll multiplier: ${mul.toFixed(2)}×${suffix}`);
     }
 
-    // Diversity watchdog peak similarity (v0.19).
+    // Diversity watchdog peak similarity (v0.19; semantic in v0.29).
     const dw = service.diversityWatchdog as unknown as {
-      peakPairwiseSimilarity?: () => number | null;
+      peakSimilarity?: () => number;
     } | null;
-    if (dw && typeof dw.peakPairwiseSimilarity === "function") {
+    if (dw && typeof dw.peakSimilarity === "function") {
       try {
-        const peak = dw.peakPairwiseSimilarity();
+        const peak = dw.peakSimilarity();
         if (typeof peak === "number") {
-          const threshold = service.colonyConfig?.diversityThreshold ?? 0.8;
+          const mode = service.colonyConfig?.diversityMode ?? "lexical";
+          const threshold =
+            mode === "semantic" || mode === "both"
+              ? service.colonyConfig?.diversitySemanticThreshold ?? 0.85
+              : service.colonyConfig?.diversityThreshold ?? 0.8;
           const warning = peak >= threshold * 0.9 ? " ⚠️" : "";
+          const modeTag = mode === "lexical" ? "" : ` [${mode}]`;
           lines.push(
-            `- Output diversity: peak pairwise ${peak.toFixed(2)} (threshold ${threshold.toFixed(2)})${warning}`,
+            `- Output diversity${modeTag}: peak pairwise ${peak.toFixed(2)} (threshold ${threshold.toFixed(2)})${warning}`,
           );
         }
       } catch {

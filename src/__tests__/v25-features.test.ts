@@ -249,7 +249,7 @@ describe("COLONY_HEALTH_REPORT — handler output", () => {
 
   it("surfaces diversity watchdog peak when available", async () => {
     service.diversityWatchdog = {
-      peakPairwiseSimilarity: () => 0.75,
+      peakSimilarity: () => 0.75,
     };
     service.colonyConfig.diversityThreshold = 0.8;
     const text = await runHealth();
@@ -259,7 +259,7 @@ describe("COLONY_HEALTH_REPORT — handler output", () => {
 
   it("adds a warning on the diversity line when peak is within 90% of threshold", async () => {
     service.diversityWatchdog = {
-      peakPairwiseSimilarity: () => 0.78, // 0.78 >= 0.8 * 0.9 = 0.72
+      peakSimilarity: () => 0.78, // 0.78 >= 0.8 * 0.9 = 0.72
     };
     service.colonyConfig.diversityThreshold = 0.8;
     const text = await runHealth();
@@ -274,7 +274,7 @@ describe("COLONY_HEALTH_REPORT — handler output", () => {
 
   it("swallows errors from the diversity accessor", async () => {
     service.diversityWatchdog = {
-      peakPairwiseSimilarity: () => {
+      peakSimilarity: () => {
         throw new Error("ring corrupted");
       },
     };
@@ -299,7 +299,7 @@ describe("COLONY_HEALTH_REPORT — handler output", () => {
 
   it("handles a null peak-pairwise-similarity return", async () => {
     service.diversityWatchdog = {
-      peakPairwiseSimilarity: () => null,
+      peakSimilarity: () => null,
     };
     const text = await runHealth();
     expect(text).not.toContain("Output diversity");

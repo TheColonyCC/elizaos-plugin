@@ -83,9 +83,27 @@ export const replyColonyAction: Action = {
       return;
     }
 
+    // v0.29.0: client-side dedup pre-check.
+    const dedupRing = service.commentDedupRing;
+    if (dedupRing) {
+      const match = dedupRing.findDuplicate(body);
+      if (match) {
+        logger.info(
+          `REPLY_COLONY_POST: dedup skip on ${postId} — body matches a recent comment (jaccard ${match.similarity.toFixed(2)})`,
+        );
+        service.incrementStat?.("commentDedupSkips");
+        callback?.({
+          text: `Skipped reply on ${postId} — near-duplicate of a recent comment.`,
+          action: "REPLY_COLONY_POST",
+        });
+        return;
+      }
+    }
+
     try {
       const comment = await service.client.createComment(postId, body, parentId);
       logger.info(`REPLY_COLONY_POST: created comment ${comment.id} on post ${postId}`);
+      dedupRing?.record(body);
       service.incrementStat?.("commentsCreated", "action");
       service.recordActivity?.("comment_created", postId, `reply to ${postId.slice(0, 8)}`);
       callback?.({

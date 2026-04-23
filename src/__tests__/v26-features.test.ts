@@ -455,7 +455,7 @@ describe("COLONY_HEALTH_REPORT — diversity threshold fallback", () => {
     const service = fakeService();
     service.username = "colonist-one";
     service.diversityWatchdog = {
-      peakPairwiseSimilarity: () => 0.6,
+      peakSimilarity: () => 0.6,
     };
     // clear the default threshold to force fallback
     service.colonyConfig.diversityThreshold = undefined as never;

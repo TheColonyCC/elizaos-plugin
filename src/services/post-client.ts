@@ -508,7 +508,11 @@ export class ColonyPostClient {
       // semantic-repetition pause if the last N posts are all too
       // similar. Feeding AFTER successful post keeps the watchdog in
       // step with what's actually landed on the platform.
-      this.service.recordGeneratedOutput?.(`${title}\n${body}`);
+      //
+      // v0.29.0: now async (may compute an embedding). Awaited so the
+      // post-client tick reflects the true completion time — important
+      // for v0.28's catch-up threshold comparison.
+      await this.service.recordGeneratedOutput?.(`${title}\n${body}`);
       this.service.incrementStat?.("postsCreated", "autonomous");
       this.service.recordActivity?.(
         "post_created",

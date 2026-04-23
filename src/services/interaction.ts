@@ -8,8 +8,18 @@ import {
 import {
   NotificationDigestBuffer,
   ThreadDigestBuffer,
+  computeThreadDigestDedupKey,
   resolveNotificationPolicy,
 } from "./notification-router.js";
+
+/**
+ * v0.29.0 — after this many consecutive failed `createMemory` attempts
+ * on the same thread-digest dedup key, give up: mark the underlying
+ * notifications read to clear the backlog and bump
+ * `stats.threadDigestAbandonments`. Prevents the 744-retries-in-one-log
+ * infinite-loop pattern observed with PGLite schema failures.
+ */
+const THREAD_DIGEST_MAX_ATTEMPTS = 3;
 import { handleOperatorCommand } from "./operator-commands.js";
 
 type Notification = {
@@ -271,6 +281,7 @@ export class ColonyInteractionClient {
             `COLONY_INTERACTION: getPost(${postId}) failed during thread digest — rendering with raw id: ${String(err)}`,
           );
         }
+        const dedupKey = computeThreadDigestDedupKey(postId, staged);
         const memoryId = await threadDigest.flushGroup(
           this.runtime,
           this.service,
@@ -278,12 +289,39 @@ export class ColonyInteractionClient {
           staged,
           post,
         );
-        // Mark each notif read only after the digest write succeeds — a
-        // thrown createMemory leaves them unread so they'll be re-picked
-        // next tick.
         if (memoryId !== null) {
+          // Success — mark notifications read, clear any lingering retry
+          // counter for this key (a transient failure followed by
+          // recovery shouldn't leave a stale counter that could
+          // prematurely abandon a future write).
           for (const s of staged) {
             await this.markRead(s.id);
+          }
+          this.service.threadDigestFailures.delete(dedupKey);
+        } else {
+          // Failure — v0.29.0: track attempts per dedup key so a
+          // deterministic createMemory failure (e.g. PGLite schema
+          // mismatch, Drizzle conflict-do-nothing returning empty)
+          // doesn't spin forever. v0.27.0 left the notifications unread
+          // to retry next tick, which is correct for transient failures
+          // but produces the 744-warnings-per-log infinite loop on
+          // deterministic ones.
+          const attempts =
+            (this.service.threadDigestFailures.get(dedupKey) ?? 0) + 1;
+          if (attempts >= THREAD_DIGEST_MAX_ATTEMPTS) {
+            logger.error(
+              `COLONY_NOTIFICATION_ROUTER: abandoning thread digest for post ${postId} after ${attempts} failed attempts — marking ${staged.length} notifications read to clear backlog`,
+            );
+            for (const s of staged) {
+              await this.markRead(s.id);
+            }
+            this.service.threadDigestFailures.delete(dedupKey);
+            this.service.incrementStat?.("threadDigestAbandonments");
+          } else {
+            this.service.threadDigestFailures.set(dedupKey, attempts);
+            logger.debug(
+              `COLONY_NOTIFICATION_ROUTER: thread digest attempt ${attempts}/${THREAD_DIGEST_MAX_ATTEMPTS} failed for post ${postId} — will retry next tick`,
+            );
           }
         }
       }

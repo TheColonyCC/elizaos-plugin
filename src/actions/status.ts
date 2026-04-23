@@ -161,13 +161,22 @@ export const colonyStatusAction: Action = {
     // v0.19.0: diversity-watchdog peek. Shown only when the watchdog
     // has accumulated at least 2 samples — single-sample state tells
     // the operator nothing.
+    // v0.29.0: threshold display reflects the mode's primary metric.
+    // For `semantic` and `both`, peak is cosine-over-embeddings, so we
+    // show the semantic threshold (pulling the lexical one would give
+    // the operator a mismatched comparison). For `lexical`, unchanged.
     const watchdog = service.diversityWatchdog;
     if (watchdog && watchdog.size() >= 2) {
       const peak = watchdog.peakSimilarity();
-      const threshold = service.colonyConfig.diversityThreshold;
+      const mode = service.colonyConfig.diversityMode;
+      const threshold =
+        mode === "semantic" || mode === "both"
+          ? service.colonyConfig.diversitySemanticThreshold
+          : service.colonyConfig.diversityThreshold;
       const warn = peak >= threshold * 0.9 ? " ⚠️" : "";
+      const modeTag = mode === "lexical" ? "" : ` [${mode}]`;
       lines.push(
-        `Content diversity${warn}: ${watchdog.size()} samples, peak similarity ${Math.round(peak * 100)}% (threshold ${Math.round(threshold * 100)}%).`,
+        `Content diversity${modeTag}${warn}: ${watchdog.size()} samples, peak similarity ${Math.round(peak * 100)}% (threshold ${Math.round(threshold * 100)}%).`,
       );
     }
 
