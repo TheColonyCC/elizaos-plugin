@@ -231,6 +231,20 @@ export const colonyStatusAction: Action = {
       lines.push(`Rate-limit hits this session: ${rlTotal}${suffix}.`);
     }
 
+    // v0.30.0: auto-vote visibility. Only surface when enabled — quiet
+    // by default for operators who haven't flipped the feature on.
+    if (service.colonyConfig.autoVoteEnabled) {
+      const up = stats.autoUpvotesCast ?? 0;
+      const down = stats.autoDownvotesCast ?? 0;
+      const downSuffix = service.colonyConfig.autoDownvoteEnabled
+        ? `, down: ${down}`
+        : ", down: disabled";
+      const cap = service.colonyConfig.autoVoteMaxPerTick;
+      lines.push(
+        `Auto-vote: enabled (up: ${up}${downSuffix} this session, cap ${cap}/tick).`,
+      );
+    }
+
     // v0.23.0: adaptive poll visibility. Always surface when enabled so
     // operators can see the current multiplier even at 1.0 (healthy).
     if (service.colonyConfig.adaptivePollEnabled) {

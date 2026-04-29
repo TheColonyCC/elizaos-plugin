@@ -140,6 +140,10 @@ export interface FakeService {
     dmPromptMode?: "none" | "peer" | "adversarial";
     catchupThresholdMs?: number;
     engageThreadCompression?: "verbatim" | "abridged";
+    autoVoteEnabled?: boolean;
+    autoDownvoteEnabled?: boolean;
+    autoVoteMaxPerTick?: number;
+    autoVoteIncludeComments?: boolean;
   };
   draftQueue?: unknown;
   cooldown?: ReturnType<typeof vi.fn>;
@@ -169,6 +173,8 @@ export interface FakeService {
     catchupsTriggered?: number;
     threadDigestAbandonments?: number;
     commentDedupSkips?: number;
+    autoUpvotesCast?: number;
+    autoDownvotesCast?: number;
   };
   threadDigestFailures?: Map<string, number>;
   commentDedupRing?: unknown;
@@ -282,6 +288,10 @@ export function fakeService(
       commentDedupEnabled: false,
       commentDedupRingSize: 16,
       commentDedupThreshold: 0.7,
+      autoVoteEnabled: false,
+      autoDownvoteEnabled: false,
+      autoVoteMaxPerTick: 2,
+      autoVoteIncludeComments: true,
       ...configOverrides,
     },
     cooldown: vi.fn((ms: number) => Date.now() + ms),
@@ -311,6 +321,8 @@ export function fakeService(
       catchupsTriggered: 0,
       threadDigestAbandonments: 0,
       commentDedupSkips: 0,
+      autoUpvotesCast: 0,
+      autoDownvotesCast: 0,
     },
     threadDigestFailures: new Map(),
     commentDedupRing: null,

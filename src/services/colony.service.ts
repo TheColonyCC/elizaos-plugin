@@ -101,6 +101,16 @@ export interface ColonyServiceStats {
    * have produced a `ColonyConflictError`.
    */
   commentDedupSkips: number;
+  /**
+   * v0.30.0: autonomous upvotes / downvotes cast by the engagement
+   * client's auto-vote pass. Separate from `votesCast` (which is
+   * incremented by `CURATE_COLONY_FEED` + the imperative VOTE action)
+   * so observability surfaces can distinguish operator-driven curation
+   * from drive-by autonomous voting. Both stay 0 until
+   * `COLONY_AUTO_VOTE_ENABLED=true`.
+   */
+  autoUpvotesCast: number;
+  autoDownvotesCast: number;
 }
 
 /**
@@ -176,6 +186,8 @@ export class ColonyService extends Service {
     catchupsTriggered: 0,
     threadDigestAbandonments: 0,
     commentDedupSkips: 0,
+    autoUpvotesCast: 0,
+    autoDownvotesCast: 0,
   };
 
   /**
@@ -327,6 +339,14 @@ export class ColonyService extends Service {
      * calm" is very different from "still hitting 429s right now."
      */
     rateLimitHitsRecent: number;
+    /**
+     * v0.30.0: cumulative auto-vote counters captured at snapshot time.
+     * Stays at 0 unless `COLONY_AUTO_VOTE_ENABLED` is on; lets
+     * `COLONY_HEALTH_HISTORY` show curation activity over time alongside
+     * the existing health signals.
+     */
+    autoUpvotesCast: number;
+    autoDownvotesCast: number;
   }> = [];
 
   /**
@@ -363,6 +383,8 @@ export class ColonyService extends Service {
       digestsEmitted: this.stats.notificationDigestsEmitted ?? 0,
       threadDigestsEmitted: this.stats.threadDigestsEmitted ?? 0,
       rateLimitHitsRecent: this.rateLimitHitsInWindow(10 * 60_000, now),
+      autoUpvotesCast: this.stats.autoUpvotesCast ?? 0,
+      autoDownvotesCast: this.stats.autoDownvotesCast ?? 0,
     };
     this.healthSnapshots = [...this.healthSnapshots, snapshot].slice(
       -HEALTH_HISTORY_SIZE,
@@ -976,6 +998,10 @@ export class ColonyService extends Service {
         useRising: service.colonyConfig.engageUseRising,
         trendingBoost: service.colonyConfig.engageTrendingBoost,
         trendingRefreshMs: service.colonyConfig.engageTrendingRefreshMs,
+        autoVoteEnabled: service.colonyConfig.autoVoteEnabled,
+        autoDownvoteEnabled: service.colonyConfig.autoDownvoteEnabled,
+        autoVoteMaxPerTick: service.colonyConfig.autoVoteMaxPerTick,
+        autoVoteIncludeComments: service.colonyConfig.autoVoteIncludeComments,
       });
       await service.engagementClient.start();
     } else {

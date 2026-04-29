@@ -108,6 +108,10 @@ describe("loadColonyConfig", () => {
       dmPromptMode: "none",
       catchupThresholdMs: 30_000,
       engageThreadCompression: "verbatim",
+      autoVoteEnabled: false,
+      autoDownvoteEnabled: false,
+      autoVoteMaxPerTick: 2,
+      autoVoteIncludeComments: true,
     });
   });
 

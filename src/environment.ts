@@ -311,6 +311,31 @@ export interface ColonyConfig {
    * action-meta filtering.
    */
   dmPromptMode: DmPromptMode;
+  /**
+   * v0.30.0 — autonomous voting on engagement candidates. When
+   * `autoVoteEnabled` is true, the engagement client scores its current
+   * candidate post (and optionally the thread comments it already
+   * fetched) using the same conservative `scorePost` rubric as
+   * `CURATE_COLONY_FEED`, and casts a vote when the label is `EXCELLENT`
+   * (→ +1) or `SPAM` / `INJECTION` / `BANNED` (→ -1). `SKIP` (the
+   * majority case) produces no vote.
+   *
+   * Asymmetric defaults: `autoVoteEnabled` flips upvotes on, but
+   * downvotes require their own opt-in via `autoDownvoteEnabled`. The
+   * polite default is upvote-only because autonomous downvotes invite
+   * peer retaliation in a way operator-curated downvotes don't.
+   *
+   * Per-tick cap (`autoVoteMaxPerTick`, default 2) keeps a single
+   * engagement tick from emitting a flurry of votes. 0 disables.
+   *
+   * Reuses the `colony/curate/voted/<username>` cache ledger shared
+   * with `CURATE_COLONY_FEED`, so manual and autonomous passes never
+   * double-vote on the same id.
+   */
+  autoVoteEnabled: boolean;
+  autoDownvoteEnabled: boolean;
+  autoVoteMaxPerTick: number;
+  autoVoteIncludeComments: boolean;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -833,6 +858,44 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
   const notificationDigest: "off" | "per-thread" =
     notificationDigestRaw === "per-thread" ? "per-thread" : "off";
 
+  // v0.30.0 — autonomous voting on engagement candidates.
+  const autoVoteEnabledRaw = getSetting(runtime, "COLONY_AUTO_VOTE_ENABLED", "false")!
+    .toLowerCase()
+    .trim();
+  const autoVoteEnabled = autoVoteEnabledRaw === "true" || autoVoteEnabledRaw === "1";
+
+  const autoDownvoteEnabledRaw = getSetting(
+    runtime,
+    "COLONY_AUTO_DOWNVOTE_ENABLED",
+    "false",
+  )!
+    .toLowerCase()
+    .trim();
+  const autoDownvoteEnabled =
+    autoDownvoteEnabledRaw === "true" || autoDownvoteEnabledRaw === "1";
+
+  // Default 2; clamped to [0, 10] — 0 disables the pass even if the
+  // master switch is on (useful for temporary mute without flipping
+  // the env-var graph).
+  const autoVoteMaxRaw = getSetting(runtime, "COLONY_AUTO_VOTE_MAX_PER_TICK", "2")!;
+  const parsedAutoVoteMax = Number.parseInt(autoVoteMaxRaw, 10);
+  const autoVoteMaxPerTick = Number.isFinite(parsedAutoVoteMax)
+    ? Math.max(0, Math.min(10, parsedAutoVoteMax))
+    : 2;
+
+  // Default true: when auto-vote is on, the thread comments the
+  // engagement client already fetched are also eligible. Operators who
+  // only want post-level voting flip this off.
+  const autoVoteIncludeCommentsRaw = getSetting(
+    runtime,
+    "COLONY_AUTO_VOTE_INCLUDE_COMMENTS",
+    "true",
+  )!
+    .toLowerCase()
+    .trim();
+  const autoVoteIncludeComments =
+    autoVoteIncludeCommentsRaw !== "false" && autoVoteIncludeCommentsRaw !== "0";
+
   // v0.27.0 — DM-origin prompt framing. Unknown values fail closed to "none"
   // (preserves v0.26 behaviour, never injects a preamble the operator didn't ask for).
   const dmPromptModeRaw = getSetting(runtime, "COLONY_DM_PROMPT_MODE", "none")!
@@ -929,6 +992,10 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     dmPromptMode,
     catchupThresholdMs,
     engageThreadCompression,
+    autoVoteEnabled,
+    autoDownvoteEnabled,
+    autoVoteMaxPerTick,
+    autoVoteIncludeComments,
   };
 }
 

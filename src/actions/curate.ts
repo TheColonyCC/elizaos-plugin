@@ -9,11 +9,10 @@ import {
 } from "@elizaos/core";
 import type { ColonyService } from "../services/colony.service.js";
 import { scorePost, type PostScore } from "../services/post-scorer.js";
+import { readLedger, writeLedger } from "../services/curate-ledger.js";
 
 const CURATE_KEYWORDS = ["curate", "moderate"];
 const CURATE_REGEX = /\b(?:curate|curation|moderate|moderation)\b/i;
-const LEDGER_CACHE_PREFIX = "colony/curate/voted";
-const LEDGER_SIZE = 500;
 
 type PostLike = {
   id?: string;
@@ -223,31 +222,3 @@ async function tryVote(
   }
 }
 
-function ledgerKey(service: ColonyService): string {
-  const username = service.username ?? "unknown";
-  return `${LEDGER_CACHE_PREFIX}/${username}`;
-}
-
-async function readLedger(
-  runtime: IAgentRuntime,
-  service: ColonyService,
-): Promise<string[]> {
-  const rt = runtime as unknown as {
-    getCache?: <T>(key: string) => Promise<T | undefined>;
-  };
-  if (typeof rt.getCache !== "function") return [];
-  const cached = await rt.getCache<string[]>(ledgerKey(service));
-  return Array.isArray(cached) ? cached : [];
-}
-
-async function writeLedger(
-  runtime: IAgentRuntime,
-  service: ColonyService,
-  ids: string[],
-): Promise<void> {
-  const rt = runtime as unknown as {
-    setCache?: <T>(key: string, value: T) => Promise<void>;
-  };
-  if (typeof rt.setCache !== "function") return;
-  await rt.setCache(ledgerKey(service), ids.slice(-LEDGER_SIZE));
-}

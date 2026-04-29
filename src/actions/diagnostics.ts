@@ -135,6 +135,24 @@ export const colonyDiagnosticsAction: Action = {
     if (cfg.dmMinKarma > 0) {
       lines.push(`DM karma gate: ≥ ${cfg.dmMinKarma} required`);
     }
+    // v0.30.0: full auto-vote dump. Diagnostics is the superset surface,
+    // so we always render the four config knobs + cumulative counters
+    // (even at 0/disabled) so operators can confirm the feature state.
+    const autoUp = service.stats.autoUpvotesCast ?? 0;
+    const autoDown = service.stats.autoDownvotesCast ?? 0;
+    if (cfg.autoVoteEnabled) {
+      const downStatus = cfg.autoDownvoteEnabled
+        ? `up+down (cap ${cfg.autoVoteMaxPerTick}/tick)`
+        : `up only (cap ${cfg.autoVoteMaxPerTick}/tick)`;
+      const includeStr = cfg.autoVoteIncludeComments
+        ? "post + thread comments"
+        : "post only";
+      lines.push(
+        `Auto-vote: enabled, ${downStatus}, scoring ${includeStr}; ${autoUp} upvotes, ${autoDown} downvotes this session`,
+      );
+    } else {
+      lines.push(`Auto-vote: disabled`);
+    }
     if (service.pausedUntilTs > Date.now()) {
       lines.push(
         `⏸️  Paused for karma backoff — ${Math.max(

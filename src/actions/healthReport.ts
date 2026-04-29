@@ -188,6 +188,17 @@ export const colonyHealthReportAction: Action = {
       }
     }
 
+    // v0.30.0: auto-vote activity. Only render when the feature is on
+    // (so disabled = no line, parallel to adaptive-poll's behaviour).
+    if (service.colonyConfig?.autoVoteEnabled) {
+      const up = service.stats?.autoUpvotesCast ?? 0;
+      const down = service.stats?.autoDownvotesCast ?? 0;
+      const downSuffix = service.colonyConfig?.autoDownvoteEnabled
+        ? `, ${down} downvotes`
+        : ", downvotes disabled";
+      lines.push(`- Auto-vote: ${up} upvotes${downSuffix} this session`);
+    }
+
     // v0.26.0: snapshot into the health-history ring. Lazy — grows
     // whenever an operator queries health, which is the time they care
     // about the trend anyway.

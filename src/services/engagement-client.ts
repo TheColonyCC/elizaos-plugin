@@ -39,6 +39,8 @@ import { validateGeneratedOutput } from "./output-validator.js";
 import { isOllamaReachable } from "../utils/readiness.js";
 import { isInQuietHours } from "../environment.js";
 import { scorePost } from "./post-scorer.js";
+import { runAutoVotePass, type AutoVoteSink } from "./auto-vote.js";
+import { readLedger, writeLedger } from "./curate-ledger.js";
 import { emitEvent } from "../utils/emitEvent.js";
 import { DraftQueue } from "./draft-queue.js";
 import { readWatchList, writeWatchList, type WatchEntry } from "../actions/watchPost.js";
@@ -132,6 +134,28 @@ export interface ColonyEngagementClientConfig {
   trendingBoost?: boolean;
   /** v0.20.0: refresh interval (ms) for the cached trending-tag set. Default 15min. */
   trendingRefreshMs?: number;
+  /**
+   * v0.30.0: autonomous voting on engagement candidates. When true,
+   * after the candidate post + thread comments are fetched but before
+   * comment generation, each target is run through `scorePost` and a
+   * vote is cast on `EXCELLENT` (→ +1) or `SPAM` / `INJECTION` /
+   * `BANNED` (→ -1). `SKIP` produces no vote. The candidate-post
+   * downvote path additionally short-circuits comment generation —
+   * no point amplifying confirmed spam with a substantive reply.
+   * Default `false`; preserves v0.29 behaviour.
+   */
+  autoVoteEnabled?: boolean;
+  /**
+   * v0.30.0: gate for the downvote half of auto-voting. Asymmetric —
+   * `autoVoteEnabled` flips upvotes on, `autoDownvoteEnabled` is a
+   * separate explicit opt-in. Polite default is upvote-only because
+   * autonomous downvotes invite peer retaliation.
+   */
+  autoDownvoteEnabled?: boolean;
+  /** v0.30.0: hard cap on votes cast in a single engagement tick. 0 disables. */
+  autoVoteMaxPerTick?: number;
+  /** v0.30.0: when true, thread comments fetched for prompt context are also vote-eligible. */
+  autoVoteIncludeComments?: boolean;
 }
 
 const ENGAGEMENT_LENGTH_PROMPTS: Record<
@@ -419,6 +443,19 @@ export class ColonyEngagementClient {
     }
 
     const threadComments = await this.fetchThreadComments(candidate.id);
+
+    // v0.30.0: auto-vote pass — score the candidate post + already-fetched
+    // thread comments, cast +1 / -1 votes per the rubric, and short-circuit
+    // engagement when the candidate post itself was downvoted as spam /
+    // injection (no point amplifying confirmed bad content with a reply).
+    const autoVoteResult = await this.runAutoVotePassIfEnabled(candidate, threadComments);
+    if (!autoVoteResult.shouldEngage) {
+      logger.info(
+        `🌐 COLONY_ENGAGEMENT_CLIENT: auto-vote downvoted candidate ${candidate.id} — skipping engagement`,
+      );
+      await this.markSeen(candidate.id);
+      return;
+    }
 
     // v0.13.0: intelligent classifier — decide whether to comment, react, or skip
     if (this.config.reactionMode) {
@@ -817,6 +854,108 @@ export class ColonyEngagementClient {
     // Unrecognized → fall through to COMMENT (safe-ish default; goes
     // through the existing generation + self-check pipeline)
     return "COMMENT";
+  }
+
+  /**
+   * v0.30.0 — run the auto-vote pass over the candidate post and (when
+   * configured) its already-fetched thread comments. No-op when the
+   * feature is disabled. Returns `{ shouldEngage }` so the tick can
+   * short-circuit on a confirmed-spam candidate.
+   *
+   * Reuses the `colony/curate/voted/<username>` ledger shared with
+   * `CURATE_COLONY_FEED` — manual and autonomous passes never double-vote.
+   */
+  private async runAutoVotePassIfEnabled(
+    candidate: PostLike,
+    threadComments: CommentLike[],
+  ): Promise<{ shouldEngage: boolean }> {
+    if (!this.config.autoVoteEnabled) return { shouldEngage: true };
+
+    const ledger = new Set(await readLedger(this.runtime, this.service));
+    const sink: AutoVoteSink = {
+      ledger,
+      recordLedger: async (_id) => {
+        await writeLedger(this.runtime, this.service, [...ledger]);
+      },
+      votePost: async (postId, value) => {
+        try {
+          await this.service.client.votePost(postId, value);
+          return true;
+        } catch (err) {
+          logger.warn(
+            `COLONY_ENGAGEMENT_CLIENT: auto-vote votePost(${postId}, ${value}) failed: ${String(err)}`,
+          );
+          return false;
+        }
+      },
+      voteComment: async (commentId, value) => {
+        const client = this.service.client as unknown as {
+          voteComment?: (id: string, value: 1 | -1) => Promise<unknown>;
+        };
+        if (typeof client.voteComment !== "function") return false;
+        try {
+          await client.voteComment(commentId, value);
+          return true;
+        } catch (err) {
+          logger.warn(
+            `COLONY_ENGAGEMENT_CLIENT: auto-vote voteComment(${commentId}, ${value}) failed: ${String(err)}`,
+          );
+          return false;
+        }
+      },
+      incrementStat: (key) => {
+        this.service.incrementStat?.(key);
+      },
+      recordActivity: (id, label) => {
+        this.service.recordActivity?.("vote_cast", id, label);
+      },
+    };
+
+    const { outcomes, shouldEngage } = await runAutoVotePass(
+      this.runtime,
+      {
+        id: candidate.id,
+        title: candidate.title,
+        body: candidate.body,
+        author: candidate.author?.username,
+      },
+      threadComments.map((c) => ({
+        id: c.id,
+        body: c.body,
+        author: c.author?.username,
+      })),
+      {
+        enabled: true,
+        upvoteEnabled: true,
+        downvoteEnabled: this.config.autoDownvoteEnabled ?? false,
+        maxPerTick: this.config.autoVoteMaxPerTick ?? 2,
+        scoreOptions: {
+          bannedPatterns: this.config.bannedPatterns,
+          modelType: this.config.scorerModelType,
+        },
+        selfUsername: (this.service as unknown as { username?: string }).username,
+      },
+      sink,
+      { includeComments: this.config.autoVoteIncludeComments ?? true },
+    );
+
+    for (const o of outcomes) {
+      if (!o.voted) continue;
+      logger.info(
+        `🌐 COLONY_ENGAGEMENT_CLIENT auto-${o.action} ${o.kind} ${o.id} (${o.score})`,
+      );
+      emitEvent(this.config.logFormat ?? "text", {
+        level: "info",
+        event: "vote.cast",
+        kind: o.kind,
+        targetId: o.id,
+        direction: o.action === "upvote" ? "+1" : "-1",
+        label: o.score,
+        autonomous: true,
+      }, `auto-vote ${o.action} on ${o.kind} ${o.id}`);
+    }
+
+    return { shouldEngage };
   }
 
   private async reactAndMarkSeen(
