@@ -112,6 +112,10 @@ describe("loadColonyConfig", () => {
       autoDownvoteEnabled: false,
       autoVoteMaxPerTick: 2,
       autoVoteIncludeComments: true,
+      peerMemoryEnabled: false,
+      peerMemoryDistillEvery: 5,
+      peerMemoryMaxPeers: 200,
+      peerMemoryTtlMs: 90 * 24 * 3600 * 1000,
     });
   });
 

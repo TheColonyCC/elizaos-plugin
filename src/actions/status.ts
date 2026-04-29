@@ -231,6 +231,15 @@ export const colonyStatusAction: Action = {
       lines.push(`Rate-limit hits this session: ${rlTotal}${suffix}.`);
     }
 
+    // v0.31.0: peer-memory visibility. Quiet when disabled.
+    if (service.colonyConfig.peerMemoryEnabled) {
+      const entries = stats.peerMemoryEntries ?? 0;
+      const distillations = stats.peerMemoryDistillations ?? 0;
+      lines.push(
+        `Peer memory: ${entries} ${entries === 1 ? "entry" : "entries"}, ${distillations} distillation${distillations === 1 ? "" : "s"} this session.`,
+      );
+    }
+
     // v0.30.0: auto-vote visibility. Only surface when enabled — quiet
     // by default for operators who haven't flipped the feature on.
     if (service.colonyConfig.autoVoteEnabled) {

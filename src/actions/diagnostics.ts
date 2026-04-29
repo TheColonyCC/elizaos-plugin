@@ -135,6 +135,18 @@ export const colonyDiagnosticsAction: Action = {
     if (cfg.dmMinKarma > 0) {
       lines.push(`DM karma gate: ≥ ${cfg.dmMinKarma} required`);
     }
+    // v0.31.0: peer-memory dump. Always renders (enabled or disabled).
+    const peerEntries = service.stats.peerMemoryEntries ?? 0;
+    const peerDistill = service.stats.peerMemoryDistillations ?? 0;
+    if (cfg.peerMemoryEnabled) {
+      const ttlDays = Math.round(cfg.peerMemoryTtlMs / (24 * 3600_000));
+      lines.push(
+        `Peer memory: enabled (cap ${cfg.peerMemoryMaxPeers}, distill every ${cfg.peerMemoryDistillEvery}, TTL ${ttlDays}d); ${peerEntries} entries, ${peerDistill} distillations this session`,
+      );
+    } else {
+      lines.push(`Peer memory: disabled`);
+    }
+
     // v0.30.0: full auto-vote dump. Diagnostics is the superset surface,
     // so we always render the four config knobs + cumulative counters
     // (even at 0/disabled) so operators can confirm the feature state.

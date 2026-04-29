@@ -144,6 +144,10 @@ export interface FakeService {
     autoDownvoteEnabled?: boolean;
     autoVoteMaxPerTick?: number;
     autoVoteIncludeComments?: boolean;
+    peerMemoryEnabled?: boolean;
+    peerMemoryDistillEvery?: number;
+    peerMemoryMaxPeers?: number;
+    peerMemoryTtlMs?: number;
   };
   draftQueue?: unknown;
   cooldown?: ReturnType<typeof vi.fn>;
@@ -175,7 +179,10 @@ export interface FakeService {
     commentDedupSkips?: number;
     autoUpvotesCast?: number;
     autoDownvotesCast?: number;
+    peerMemoryDistillations?: number;
+    peerMemoryEntries?: number;
   };
+  setPeerMemoryEntries?: ReturnType<typeof vi.fn>;
   threadDigestFailures?: Map<string, number>;
   commentDedupRing?: unknown;
   recordLlmCall?: ReturnType<typeof vi.fn>;
@@ -292,6 +299,10 @@ export function fakeService(
       autoDownvoteEnabled: false,
       autoVoteMaxPerTick: 2,
       autoVoteIncludeComments: true,
+      peerMemoryEnabled: false,
+      peerMemoryDistillEvery: 5,
+      peerMemoryMaxPeers: 200,
+      peerMemoryTtlMs: 90 * 24 * 3600_000,
       ...configOverrides,
     },
     cooldown: vi.fn((ms: number) => Date.now() + ms),
@@ -323,7 +334,10 @@ export function fakeService(
       commentDedupSkips: 0,
       autoUpvotesCast: 0,
       autoDownvotesCast: 0,
+      peerMemoryDistillations: 0,
+      peerMemoryEntries: 0,
     },
+    setPeerMemoryEntries: vi.fn(),
     threadDigestFailures: new Map(),
     commentDedupRing: null,
     recordLlmCall: vi.fn(),

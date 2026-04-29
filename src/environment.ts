@@ -336,6 +336,25 @@ export interface ColonyConfig {
   autoDownvoteEnabled: boolean;
   autoVoteMaxPerTick: number;
   autoVoteIncludeComments: boolean;
+  /**
+   * v0.31.0 — persistent peer-summary memory. When enabled, the
+   * engagement and DM paths inject a private "Context on @username:"
+   * block before the prompt body whenever a known peer is in the
+   * conversation. Each interaction also records a small structured
+   * observation; every K-th interaction (`peerMemoryDistillEvery`)
+   * additionally calls `useModel` to refresh `styleNotes`.
+   *
+   * Default off — feature changes prompt content for every engagement,
+   * worth an explicit flip. When off, the engagement prompt path is
+   * byte-for-byte v0.30 behaviour.
+   */
+  peerMemoryEnabled: boolean;
+  /** K-th interaction triggers an LLM distillation pass. Clamped [1, 50]. */
+  peerMemoryDistillEvery: number;
+  /** Cap on peer entries; LRU-by-`lastSeen` eviction. Clamped [10, 1000]. */
+  peerMemoryMaxPeers: number;
+  /** Forget peers with no interaction in this many ms. Clamped [1d, 365d]. */
+  peerMemoryTtlMs: number;
 }
 
 export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
@@ -896,6 +915,43 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
   const autoVoteIncludeComments =
     autoVoteIncludeCommentsRaw !== "false" && autoVoteIncludeCommentsRaw !== "0";
 
+  // v0.31.0 — peer-summary memory.
+  const peerMemoryEnabledRaw = getSetting(
+    runtime,
+    "COLONY_PEER_MEMORY_ENABLED",
+    "false",
+  )!
+    .toLowerCase()
+    .trim();
+  const peerMemoryEnabled =
+    peerMemoryEnabledRaw === "true" || peerMemoryEnabledRaw === "1";
+
+  const peerDistillRaw = getSetting(
+    runtime,
+    "COLONY_PEER_MEMORY_DISTILL_EVERY",
+    "5",
+  )!;
+  const parsedPeerDistill = Number.parseInt(peerDistillRaw, 10);
+  const peerMemoryDistillEvery = Number.isFinite(parsedPeerDistill)
+    ? Math.max(1, Math.min(50, parsedPeerDistill))
+    : 5;
+
+  const peerMaxRaw = getSetting(runtime, "COLONY_PEER_MEMORY_MAX_PEERS", "200")!;
+  const parsedPeerMax = Number.parseInt(peerMaxRaw, 10);
+  const peerMemoryMaxPeers = Number.isFinite(parsedPeerMax)
+    ? Math.max(10, Math.min(1000, parsedPeerMax))
+    : 200;
+
+  const peerTtlRaw = getSetting(runtime, "COLONY_PEER_MEMORY_TTL_DAYS", "90")!;
+  const parsedPeerTtl = Number.parseInt(peerTtlRaw, 10);
+  const peerMemoryTtlMs =
+    (Number.isFinite(parsedPeerTtl)
+      ? Math.max(1, Math.min(365, parsedPeerTtl))
+      : 90) *
+    24 *
+    3600 *
+    1000;
+
   // v0.27.0 — DM-origin prompt framing. Unknown values fail closed to "none"
   // (preserves v0.26 behaviour, never injects a preamble the operator didn't ask for).
   const dmPromptModeRaw = getSetting(runtime, "COLONY_DM_PROMPT_MODE", "none")!
@@ -996,6 +1052,10 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     autoDownvoteEnabled,
     autoVoteMaxPerTick,
     autoVoteIncludeComments,
+    peerMemoryEnabled,
+    peerMemoryDistillEvery,
+    peerMemoryMaxPeers,
+    peerMemoryTtlMs,
   };
 }
 

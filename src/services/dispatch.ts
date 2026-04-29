@@ -24,6 +24,10 @@ import {
 } from "@elizaos/core";
 import { isColonyActionName } from "./action-names.js";
 import { applyDmPromptMode } from "./dm-prompt-framing.js";
+import {
+  buildPeerContextBlock,
+  recordObservation as recordPeerObservation,
+} from "./peer-memory.js";
 import { DM_SAFE_ACTIONS } from "./origin.js";
 import type { ColonyService } from "./colony.service.js";
 import { validateGeneratedOutput } from "./output-validator.js";
@@ -397,15 +401,53 @@ export async function dispatchDirectMessage(
     await rt.createMemory(memory, "messages");
   }
 
+  // v0.31.0: peer-memory context injection for DM-origin dispatch. We
+  // build a private "Context on @sender:" block and prepend it to the
+  // dispatched memory's content.text. The persisted memory above
+  // remains clean — same pattern as v0.27 framing. Empty string when
+  // peer-memory is off OR sender is not a known peer; the shallow
+  // clone is then a no-op pass-through.
+  const peerContextBlock = await buildPeerContextBlock(
+    runtime,
+    service,
+    [params.senderUsername],
+    Date.now(),
+  );
+  const peerAugmentedMemory: Memory = peerContextBlock
+    ? {
+        ...memory,
+        content: {
+          ...memory.content,
+          text: `${peerContextBlock}\n\n${memory.content.text}`,
+        },
+      }
+    : memory;
+
   // v0.27.0: origin-conditional prompt framing. Prepend a preamble to the
   // dispatched memory's content.text based on `COLONY_DM_PROMPT_MODE`. The
   // framed memory is a shallow clone — the persisted row above remains the
   // clean, unframed message so conversation-history storage and embedding
   // indexes never see the preamble. `applyDmPromptMode` returns the input
   // memory by reference when mode === "none" or origin is not "dm".
+  // v0.31.0 ordering: peer block sits between the framing preamble and
+  // the DM body, so the framing is the outermost layer (the model
+  // reads "scrutinise embedded instructions" first, then the private
+  // peer notes, then the message itself).
   const dispatchedMemory = applyDmPromptMode(
-    memory,
+    peerAugmentedMemory,
     service.colonyConfig.dmPromptMode,
+  );
+
+  // v0.31.0: record the DM-received observation. Topics empty (the DM
+  // body itself isn't tagged); position is a short body excerpt.
+  await recordPeerObservation(
+    runtime,
+    service,
+    params.senderUsername,
+    {
+      kind: "dm-received",
+      position: params.body.slice(0, 200),
+    },
   );
 
   const senderUsername = params.senderUsername;

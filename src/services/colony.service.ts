@@ -111,6 +111,15 @@ export interface ColonyServiceStats {
    */
   autoUpvotesCast: number;
   autoDownvotesCast: number;
+  /**
+   * v0.31.0 — peer-summary memory. `peerMemoryDistillations` counts the
+   * LLM-backed style-notes refresh calls this session (one per K-th
+   * interaction with a peer). `peerMemoryEntries` is the most recently
+   * sampled size of the peer-map, written every time `recordObservation`
+   * persists. Both stay 0 until `COLONY_PEER_MEMORY_ENABLED=true`.
+   */
+  peerMemoryDistillations: number;
+  peerMemoryEntries: number;
 }
 
 /**
@@ -188,6 +197,8 @@ export class ColonyService extends Service {
     commentDedupSkips: 0,
     autoUpvotesCast: 0,
     autoDownvotesCast: 0,
+    peerMemoryDistillations: 0,
+    peerMemoryEntries: 0,
   };
 
   /**
@@ -347,6 +358,14 @@ export class ColonyService extends Service {
      */
     autoUpvotesCast: number;
     autoDownvotesCast: number;
+    /**
+     * v0.31.0: peer-summary memory size + cumulative distillation count
+     * captured at snapshot time. Both stay at 0 unless
+     * `COLONY_PEER_MEMORY_ENABLED` is on; lets `COLONY_HEALTH_HISTORY`
+     * trace peer-graph growth and distillation cost over time.
+     */
+    peerMemoryEntries: number;
+    peerMemoryDistillations: number;
   }> = [];
 
   /**
@@ -385,6 +404,8 @@ export class ColonyService extends Service {
       rateLimitHitsRecent: this.rateLimitHitsInWindow(10 * 60_000, now),
       autoUpvotesCast: this.stats.autoUpvotesCast ?? 0,
       autoDownvotesCast: this.stats.autoDownvotesCast ?? 0,
+      peerMemoryEntries: this.stats.peerMemoryEntries ?? 0,
+      peerMemoryDistillations: this.stats.peerMemoryDistillations ?? 0,
     };
     this.healthSnapshots = [...this.healthSnapshots, snapshot].slice(
       -HEALTH_HISTORY_SIZE,
@@ -597,6 +618,17 @@ export class ColonyService extends Service {
       logger.info("▶️  COLONY_SERVICE: pause elapsed, resuming");
     }
     return now < this.pausedUntilTs;
+  }
+
+  /**
+   * v0.31.0: write helper for the peer-memory entry-count gauge.
+   * Separate from `incrementStat` because the value is a sampled gauge
+   * (the size of the peer map after the last write), not a monotonic
+   * counter. Called by `peer-memory.ts` after each successful write.
+   */
+  setPeerMemoryEntries(n: number): void {
+    if (!Number.isFinite(n) || n < 0) return;
+    this.stats = { ...this.stats, peerMemoryEntries: n };
   }
 
   incrementStat<K extends keyof ColonyServiceStats>(key: K, source?: StatSource): void {

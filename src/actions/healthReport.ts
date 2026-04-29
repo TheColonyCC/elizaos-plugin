@@ -188,6 +188,13 @@ export const colonyHealthReportAction: Action = {
       }
     }
 
+    // v0.31.0: peer-memory size + distillation count. Quiet when off.
+    if (service.colonyConfig?.peerMemoryEnabled) {
+      const entries = service.stats?.peerMemoryEntries ?? 0;
+      const distill = service.stats?.peerMemoryDistillations ?? 0;
+      lines.push(`- Peer memory: ${entries} entries (${distill} distillations this session)`);
+    }
+
     // v0.30.0: auto-vote activity. Only render when the feature is on
     // (so disabled = no line, parallel to adaptive-poll's behaviour).
     if (service.colonyConfig?.autoVoteEnabled) {

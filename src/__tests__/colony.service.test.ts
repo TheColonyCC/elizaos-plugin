@@ -65,6 +65,22 @@ describe("ColonyService", () => {
     await expect(ColonyService.start(runtime)).rejects.toThrow(/COLONY_API_KEY is required/);
   });
 
+  it("v0.31.0 — setPeerMemoryEntries writes a non-negative finite count", async () => {
+    mockGetMe.mockResolvedValue({ username: "alice", karma: 0 });
+    const runtime = fakeRuntime(null, { COLONY_API_KEY: "col_xyz" });
+    const service = await ColonyService.start(runtime);
+    service.setPeerMemoryEntries(5);
+    expect(service.stats.peerMemoryEntries).toBe(5);
+    // Non-finite / negative inputs are silently ignored.
+    service.setPeerMemoryEntries(NaN);
+    expect(service.stats.peerMemoryEntries).toBe(5);
+    service.setPeerMemoryEntries(-1);
+    expect(service.stats.peerMemoryEntries).toBe(5);
+    service.setPeerMemoryEntries(Infinity);
+    expect(service.stats.peerMemoryEntries).toBe(5);
+    await service.stop();
+  });
+
   it("stop() resolves without error when no interaction client is running", async () => {
     mockGetMe.mockResolvedValue({ username: "tester", karma: 0 });
     const runtime = fakeRuntime(null, { COLONY_API_KEY: "col_xyz" });

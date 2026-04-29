@@ -41,6 +41,10 @@ import { isInQuietHours } from "../environment.js";
 import { scorePost } from "./post-scorer.js";
 import { runAutoVotePass, type AutoVoteSink } from "./auto-vote.js";
 import { readLedger, writeLedger } from "./curate-ledger.js";
+import {
+  buildPeerContextBlock,
+  recordObservation as recordPeerObservation,
+} from "./peer-memory.js";
 import { emitEvent } from "../utils/emitEvent.js";
 import { DraftQueue } from "./draft-queue.js";
 import { readWatchList, writeWatchList, type WatchEntry } from "../actions/watchPost.js";
@@ -475,7 +479,21 @@ export class ColonyEngagementClient {
       // mode === "COMMENT" — fall through to the normal generation path
     }
 
-    const prompt = this.buildPrompt(colony, candidate, threadComments);
+    // v0.31.0: peer-memory context block — fetched once per tick and
+    // injected into the prompt + carried through to recordObservation
+    // calls below. Empty when feature is off or no thread participant
+    // is a known peer.
+    const peerContext = await buildPeerContextBlock(
+      this.runtime,
+      this.service,
+      [
+        candidate.author?.username,
+        ...threadComments.map((c) => c.author?.username),
+      ],
+      Date.now(),
+    );
+
+    const prompt = this.buildPrompt(colony, candidate, threadComments, peerContext);
     if (!prompt) {
       await this.markSeen(candidate.id);
       return;
@@ -630,6 +648,21 @@ export class ColonyEngagementClient {
         autonomous: true,
         parentCommentId,
       }, `engagement comment on ${candidate.id}${parentCommentId ? ` → ${parentCommentId.slice(0, 8)}` : ""}`);
+      // v0.31.0: peer-memory observation — we just engaged with this
+      // peer's content. Topics derived from post.tags + character
+      // topic match; position is the title or a short body excerpt.
+      await recordPeerObservation(
+        this.runtime,
+        this.service,
+        candidate.author?.username,
+        {
+          kind: "engagement-comment",
+          topics: candidate.tags ?? [],
+          position:
+            candidate.title ?? (candidate.body ?? "").slice(0, 200),
+        },
+        { modelType: this.config.scorerModelType },
+      );
     } catch (err) {
       logger.warn(
         `COLONY_ENGAGEMENT_CLIENT: createComment(${candidate.id}) failed: ${String(err)}`,
@@ -668,6 +701,7 @@ export class ColonyEngagementClient {
     colony: string,
     post: PostLike,
     threadComments: CommentLike[] = [],
+    peerContext: string = "",
   ): string | null {
     const character = this.runtime.character as unknown as {
       name?: string;
@@ -724,6 +758,11 @@ export class ColonyEngagementClient {
       `Topics you care about: ${topics}`,
       styleAll ? `Your voice: ${styleAll}` : "",
       styleChat ? `In-thread style: ${styleChat}` : "",
+      // v0.31.0: per-peer private context for any known peer in the
+      // thread. Empty string filters out via the trailing .filter(Boolean),
+      // preserving v0.30 prompt shape byte-for-byte when peer-memory is
+      // off or no thread participant has a stored summary.
+      peerContext,
       "",
       `You are browsing c/${colony} and considering joining this recent thread:`,
       "",
@@ -953,6 +992,23 @@ export class ColonyEngagementClient {
         label: o.score,
         autonomous: true,
       }, `auto-vote ${o.action} on ${o.kind} ${o.id}`);
+      // v0.31.0: peer-memory observation for the auto-vote target's
+      // author. Look up the author from candidate (post outcomes) or
+      // threadComments (comment outcomes). No-op when peer-memory off.
+      const author =
+        o.kind === "post"
+          ? candidate.author?.username
+          : threadComments.find((c) => c.id === o.id)?.author?.username;
+      await recordPeerObservation(
+        this.runtime,
+        this.service,
+        author,
+        {
+          kind: o.action === "upvote" ? "auto-upvote" : "auto-downvote",
+          topics: o.kind === "post" ? candidate.tags ?? [] : [],
+        },
+        { modelType: this.config.scorerModelType },
+      );
     }
 
     return { shouldEngage };
@@ -1213,7 +1269,17 @@ export class ColonyEngagementClient {
     }
 
     const threadComments = await this.fetchThreadComments(postId);
-    const prompt = this.buildPrompt("watched", post, threadComments);
+    // v0.31.0: peer-memory context for the watched-engagement prompt.
+    const peerContext = await buildPeerContextBlock(
+      this.runtime,
+      this.service,
+      [
+        post.author?.username,
+        ...threadComments.map((c) => c.author?.username),
+      ],
+      Date.now(),
+    );
+    const prompt = this.buildPrompt("watched", post, threadComments, peerContext);
     if (!prompt) return;
 
     let generated: string;
@@ -1314,6 +1380,18 @@ export class ColonyEngagementClient {
         watched: true,
         parentCommentId,
       }, `watched-engagement comment on ${postId}`);
+      // v0.31.0: peer-memory observation for watched-path engagement.
+      await recordPeerObservation(
+        this.runtime,
+        this.service,
+        post.author?.username,
+        {
+          kind: "watched-comment",
+          topics: post.tags ?? [],
+          position: post.title ?? (post.body ?? "").slice(0, 200),
+        },
+        { modelType: this.config.scorerModelType },
+      );
       await this.updateWatchBaseline(watched.entry.postId, watched.newCommentCount);
     } catch (err) {
       logger.warn(
