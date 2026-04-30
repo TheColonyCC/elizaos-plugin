@@ -194,9 +194,57 @@ export class ColonyPostClient {
     });
   }
 
+  /**
+   * v0.32.0: read the most recent post timestamp from the persisted
+   * daily ledger. Returns null when the cache is empty (never posted /
+   * fresh agent / cache cleared). Used by ``loop()`` to schedule the
+   * initial delay relative to *actual* last-post time, not to a fresh
+   * boot time — otherwise short-window restarts (the supervisor pattern)
+   * keep resetting a 4-8h interval and a post never lands.
+   */
+  private async lastPostTimestamp(): Promise<number | null> {
+    const rt = this.runtime as unknown as {
+      getCache?: <T>(key: string) => Promise<T | undefined>;
+    };
+    if (typeof rt.getCache !== "function") return null;
+    const cached = await rt.getCache<number[]>(this.dailyLedgerKey());
+    if (!Array.isArray(cached) || cached.length === 0) return null;
+    return Math.max(...cached);
+  }
+
   private async loop(): Promise<void> {
-    // Initial delay — don't post immediately on restart. Matches plugin-twitter.
-    await this.sleep(this.nextDelay());
+    // v0.32.0: persist-aware initial delay. Read the most recent post
+    // timestamp from the daily ledger; schedule the next fire relative
+    // to that, not relative to boot time. Without this, every short
+    // supervisor window would re-start a fresh 4-8h timer and the post
+    // tick would never fire.
+    //
+    // Behaviour:
+    //   * No previous timestamp → original behaviour (sleep nextDelay
+    //     before first tick), so first-ever-boot of a fresh agent still
+    //     waits the standard interval and doesn't blast a stale prompt.
+    //   * Last-post older than nextDelay() → fire immediately (delay 0).
+    //   * Last-post inside the interval → sleep the remaining time.
+    const lastPostAt = await this.lastPostTimestamp();
+    let initialDelay: number;
+    if (lastPostAt === null) {
+      initialDelay = this.nextDelay();
+    } else {
+      const targetFireAt = lastPostAt + this.nextDelay();
+      initialDelay = Math.max(0, targetFireAt - Date.now());
+      if (initialDelay === 0) {
+        const overdueSec = Math.round((Date.now() - lastPostAt) / 1000);
+        logger.info(
+          `📝 COLONY_POST_CLIENT: last post was ${overdueSec}s ago (≥ interval) — firing immediately`,
+        );
+      } else {
+        const ageSec = Math.round((Date.now() - lastPostAt) / 1000);
+        logger.info(
+          `📝 COLONY_POST_CLIENT: last post was ${ageSec}s ago — initial delay ${Math.round(initialDelay / 1000)}s`,
+        );
+      }
+    }
+    await this.sleep(initialDelay);
     while (this.isRunning) {
       const startedAt = Date.now();
       try {
