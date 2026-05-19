@@ -38,7 +38,39 @@ import { isInQuietHours } from "../environment.js";
 const CACHE_KEY_PREFIX = "colony/post-client/recent";
 const DAILY_LEDGER_PREFIX = "colony/post-client/daily";
 const RETRY_QUEUE_PREFIX = "colony/post-client/retry";
-const RECENT_POST_RING_SIZE = 10;
+const RECENT_POST_RING_SIZE = 25;
+
+/**
+ * Length-rotation presets. Operators set `COLONY_POST_LENGTH_MIX` to a
+ * comma-separated list of these names (e.g. "long,long,medium,short");
+ * each tick picks one uniformly at random. Stateless — no cycle index
+ * required across restarts. Without the env var, the legacy single-rule
+ * behaviour is preserved.
+ */
+export const LENGTH_PRESETS: Record<string, string> = {
+  long: "- Top-level post: 3-6 paragraphs, substantive and specific. Lead with the interesting point, then develop it with numbers, concrete examples, tradeoffs, or references. A post should stand on its own — a reader landing cold should understand why it matters in the first paragraph.",
+  medium:
+    "- Top-level post: 1-2 paragraphs (~400-1000 chars). One sharp observation with brief evidence — a number, a concrete example, or a specific reference. No throat-clearing, no setup, no recap. Lead with the point.",
+  short:
+    "- Top-level post: 1-3 sentences (~80-400 chars). A single tight observation, surprising data point, or genuine open question. Punchy is the point — if you need a second paragraph to make sense, this length is wrong; pick a longer rotation slot next time.",
+};
+
+/**
+ * Choose a length-rule string. When `mix` is set, picks uniformly at random
+ * from the comma-separated preset names. Unknown / empty preset names are
+ * skipped; if no valid presets remain, returns null (caller falls back to
+ * the legacy single rule).
+ */
+export function chooseLengthRule(mix?: string): string | null {
+  if (!mix) return null;
+  const slots = mix
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s in LENGTH_PRESETS);
+  if (slots.length === 0) return null;
+  const pick = slots[Math.floor(Math.random() * slots.length)]!;
+  return LENGTH_PRESETS[pick]!;
+}
 const DAILY_WINDOW_MS = 24 * 3600 * 1000;
 
 export interface ColonyPostClientConfig {
@@ -131,6 +163,13 @@ export interface ColonyPostClientConfig {
   approvalRequired?: boolean;
   /** Draft queue instance, required when `approvalRequired` is true. */
   draftQueue?: DraftQueue;
+  /**
+   * v0.33.0: length-rotation mix. Comma-separated preset names
+   * (`long`, `medium`, `short`) — each tick picks one uniformly at
+   * random. Default empty preserves legacy single-rule behaviour.
+   * Recommended for high-frequency posters: `long,long,medium,short`.
+   */
+  lengthMix?: string;
 }
 
 export class ColonyPostClient {
@@ -668,7 +707,11 @@ export class ColonyPostClient {
         ? extractRecentTopics(await this.recentPosts())
         : [];
 
+    // v0.33.0: length rotation. When `lengthMix` is set, each tick picks
+    // a preset rule; otherwise fall back to the legacy single rule.
+    const rotatedRule = chooseLengthRule(this.config.lengthMix);
     const defaultLengthRule =
+      rotatedRule ??
       "- Top-level post: 3-6 paragraphs, substantive and specific. Lead with the interesting point, then develop it with numbers, concrete examples, tradeoffs, or references. A post should stand on its own — a reader landing cold should understand why it matters in the first paragraph.";
 
     return [
@@ -691,14 +734,14 @@ export class ColonyPostClient {
         ? `Additional style guidance: ${this.config.styleHint}`
         : "",
       recentTopics.length
-        ? `Topics you have posted about recently — pick something genuinely different this time:\n${recentTopics.map((t) => `- ${t}`).join("\n")}`
+        ? `HARD RULE: do NOT post on a theme that overlaps any of these recent posts. If your draft would echo any of them, output SKIP instead:\n${recentTopics.map((t) => `- ${t}`).join("\n")}\n\nPick a genuinely different theme — different mechanism, different subject, different angle.`
         : "",
       "",
       "OUTPUT FORMAT (strict):",
       "  Title: <short headline, 50-100 chars, lead with the interesting point, no quotes or emoji>",
       "  Type: <one of: discussion, finding, question, analysis>",
       "",
-      "  <body — the full post content, 3-6 paragraphs>",
+      "  <body — the full post content; length governed by the rule above>",
       "",
       "The Title and Type lines are required. A blank line separates the header from the body. Do NOT put quotes around the title. The `Type:` line is a post-type hint for the Colony UI; use `finding` for empirical observations / data, `question` for genuine open inquiries, `analysis` for multi-point synthesis, `discussion` for everything else.",
       "",

@@ -29,6 +29,12 @@ export interface ColonyConfig {
   postTemperature: number;
   postStyleHint: string;
   postRecentTopicMemory: boolean;
+  /**
+   * v0.33.0: length-rotation mix for autonomous posts. Comma-separated
+   * preset names (`long`, `medium`, `short`); empty = legacy single-rule
+   * behaviour. Recommended for high-frequency posters: `long,long,medium,short`.
+   */
+  postLengthMix: string;
   engageEnabled: boolean;
   engageIntervalMinMs: number;
   engageIntervalMaxMs: number;
@@ -522,6 +528,8 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
   const postRecentTopicMemory =
     topicMemoryRaw === "true" || topicMemoryRaw === "1" || topicMemoryRaw === "yes";
 
+  const postLengthMix = getSetting(runtime, "COLONY_POST_LENGTH_MIX", "")!.trim();
+
   const selfCheckRaw = getSetting(runtime, "COLONY_SELF_CHECK_ENABLED", "true")!.toLowerCase();
   const selfCheckEnabled =
     selfCheckRaw === "true" || selfCheckRaw === "1" || selfCheckRaw === "yes";
@@ -982,6 +990,7 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     postTemperature,
     postStyleHint,
     postRecentTopicMemory,
+    postLengthMix,
     engageEnabled,
     engageIntervalMinMs,
     engageIntervalMaxMs,

@@ -295,13 +295,16 @@ describe("ColonyPostClient", () => {
   });
 
   it("keeps only last N posts in the dedup cache", async () => {
-    const nine = Array.from({ length: 10 }, (_, i) => `old ${i}`);
-    runtime.getCache = vi.fn(async () => nine);
+    // RECENT_POST_RING_SIZE bumped 10 → 25 in v0.33.0 (longer suppression
+    // window for high-frequency posters; 10 was being out-paced by a
+    // 4-8h post interval over multi-day spans).
+    const existing = Array.from({ length: 25 }, (_, i) => `old ${i}`);
+    runtime.getCache = vi.fn(async () => existing);
     service.client.createPost.mockResolvedValue({ id: "p" });
     await client.start();
     await vi.advanceTimersByTimeAsync(2001);
     const call = runtime.setCache.mock.calls[0];
-    expect(call[1].length).toBe(10);
+    expect(call[1].length).toBe(25);
     expect(call[1][0]).toBe("Title: A generated post\n\nA generated post.");
   });
 
@@ -470,7 +473,11 @@ describe("ColonyPostClient", () => {
     await vi.advanceTimersByTimeAsync(2001);
     const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
     expect(prompt).toContain("Old post about quantization");
-    expect(prompt).toContain("pick something genuinely different");
+    // v0.33.0: soft "pick something genuinely different" replaced by
+    // HARD RULE + explicit SKIP escape. Empirically the soft form was
+    // ignored by Gemma 4 Q4 / qwen3.6.
+    expect(prompt).toContain("HARD RULE");
+    expect(prompt).toContain("output SKIP instead");
     await c.stop();
   });
 
@@ -481,20 +488,127 @@ describe("ColonyPostClient", () => {
     await c.start();
     await vi.advanceTimersByTimeAsync(2001);
     const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
-    expect(prompt).not.toContain("pick something genuinely different");
+    expect(prompt).not.toContain("HARD RULE: do NOT post on a theme");
     await c.stop();
   });
 
+  describe("length rotation (v0.33.0)", () => {
+    it("uses the legacy long rule when lengthMix is unset", async () => {
+      service.client.createPost.mockResolvedValue({ id: "p" });
+      const c = new ColonyPostClient(service as never, runtime, config());
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(prompt).toContain("3-6 paragraphs");
+      await c.stop();
+    });
+
+    it("picks the short rule when lengthMix=short", async () => {
+      service.client.createPost.mockResolvedValue({ id: "p" });
+      const c = new ColonyPostClient(service as never, runtime, config({ lengthMix: "short" }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(prompt).toContain("1-3 sentences");
+      expect(prompt).not.toContain("3-6 paragraphs");
+      await c.stop();
+    });
+
+    it("picks the medium rule when lengthMix=medium", async () => {
+      service.client.createPost.mockResolvedValue({ id: "p" });
+      const c = new ColonyPostClient(service as never, runtime, config({ lengthMix: "medium" }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(prompt).toContain("1-2 paragraphs");
+      await c.stop();
+    });
+
+    it("falls back to the legacy rule when all mix entries are invalid", async () => {
+      service.client.createPost.mockResolvedValue({ id: "p" });
+      const c = new ColonyPostClient(service as never, runtime, config({ lengthMix: "epic,novella" }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(prompt).toContain("3-6 paragraphs");
+      await c.stop();
+    });
+  });
+
   it("catches unexpected errors in the outer tick loop", async () => {
-    // getCache throwing is inside tick() → isDuplicate() and will bubble up
-    // to the outer try-catch in loop()
-    runtime.getCache = vi.fn(async () => {
+    // getCache must succeed for the daily-ledger key (lastPostTimestamp
+    // reads it BEFORE the tick try/catch is established) and only throw
+    // inside tick → isDuplicate → otherwise the rejection escapes loop()
+    // and surfaces as an unhandled rejection.
+    runtime.getCache = vi.fn(async (k: string) => {
+      if (k.includes("/daily/")) return [];
       throw new Error("cache corrupted");
     });
     await client.start();
     await vi.advanceTimersByTimeAsync(2001);
-    // Should not crash — loop should continue to next tick
+    // Should not crash — outer catch swallowed the dedup-cache error.
     expect(service.client.createPost).not.toHaveBeenCalled();
+  });
+
+  // v0.32.0 — persist-aware initial delay branches. These were added to
+  // make ColonyPostClient honour the last-post timestamp across supervisor
+  // restarts; the immediate-fire and outer-catch branches need explicit
+  // coverage so v0.32+ doesn't slip below the 100% bar.
+  describe("persist-aware initial delay (v0.32.0)", () => {
+    it("fires immediately when last post is older than the interval", async () => {
+      // Daily ledger contains a timestamp 10h ago — much older than the
+      // 1-2s interval used by the test config. nextDelay() will be 1-2s,
+      // (now - 10h) + nextDelay() << now, so initialDelay clamps to 0
+      // and the loop logs "firing immediately".
+      const tenHoursAgo = Date.now() - 10 * 3600 * 1000;
+      runtime.getCache = vi.fn(async (k: string) => {
+        if (k.includes("/daily/")) return [tenHoursAgo];
+        return [];
+      });
+      service.client.createPost.mockResolvedValue({ id: "p" });
+      const c = new ColonyPostClient(service as never, runtime, config());
+      await c.start();
+      // Minimal advance — immediate fire should land in well under the
+      // configured 1-2s nextDelay window.
+      await vi.advanceTimersByTimeAsync(50);
+      expect(service.client.createPost).toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("sleeps the remaining interval when last post is recent", async () => {
+      // Daily ledger has a timestamp 200ms ago. With a 1-2s nextDelay
+      // the targetFireAt is in the future and initialDelay is positive,
+      // so the loop takes the "initial delay Ns" branch — distinct
+      // codepath from the overdue case above.
+      const recent = Date.now() - 200;
+      runtime.getCache = vi.fn(async (k: string) => {
+        if (k.includes("/daily/")) return [recent];
+        return [];
+      });
+      service.client.createPost.mockResolvedValue({ id: "p" });
+      const c = new ColonyPostClient(service as never, runtime, config());
+      await c.start();
+      // Advance enough to land any pending sleep + fire one tick.
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(service.client.createPost).toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("outer catch swallows non-tick errors that throw inside tick()", async () => {
+      // maybeRefreshKarma is the first awaited call inside tick() and
+      // has no internal try/catch, so throwing here exercises the outer
+      // try/catch around the tick body in loop() — not the inner
+      // useModel / createPost catches that already have coverage.
+      // Using a real Error so recordRateLimitIfApplicable's payload check
+      // sees a normal exception (and the line gets covered too).
+      service.maybeRefreshKarma = vi.fn(async () => {
+        throw new Error("karma refresh boom");
+      });
+      await client.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      // The throw is caught — process did not crash, no post made.
+      expect(service.client.createPost).not.toHaveBeenCalled();
+    });
   });
 
   describe("daily cap", () => {

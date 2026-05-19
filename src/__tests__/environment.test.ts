@@ -42,6 +42,7 @@ describe("loadColonyConfig", () => {
       postTemperature: 0.9,
       postStyleHint: "",
       postRecentTopicMemory: true,
+      postLengthMix: "",
       engageEnabled: false,
       engageIntervalMinMs: 1_800_000,
       engageIntervalMaxMs: 3_600_000,
