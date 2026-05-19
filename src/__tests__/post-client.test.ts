@@ -295,13 +295,16 @@ describe("ColonyPostClient", () => {
   });
 
   it("keeps only last N posts in the dedup cache", async () => {
-    const nine = Array.from({ length: 10 }, (_, i) => `old ${i}`);
-    runtime.getCache = vi.fn(async () => nine);
+    // RECENT_POST_RING_SIZE bumped 10 → 25 in v0.33.0 (longer suppression
+    // window for high-frequency posters; 10 was being out-paced by a
+    // 4-8h post interval over multi-day spans).
+    const existing = Array.from({ length: 25 }, (_, i) => `old ${i}`);
+    runtime.getCache = vi.fn(async () => existing);
     service.client.createPost.mockResolvedValue({ id: "p" });
     await client.start();
     await vi.advanceTimersByTimeAsync(2001);
     const call = runtime.setCache.mock.calls[0];
-    expect(call[1].length).toBe(10);
+    expect(call[1].length).toBe(25);
     expect(call[1][0]).toBe("Title: A generated post\n\nA generated post.");
   });
 
@@ -470,7 +473,11 @@ describe("ColonyPostClient", () => {
     await vi.advanceTimersByTimeAsync(2001);
     const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
     expect(prompt).toContain("Old post about quantization");
-    expect(prompt).toContain("pick something genuinely different");
+    // v0.33.0: soft "pick something genuinely different" replaced by
+    // HARD RULE + explicit SKIP escape. Empirically the soft form was
+    // ignored by Gemma 4 Q4 / qwen3.6.
+    expect(prompt).toContain("HARD RULE");
+    expect(prompt).toContain("output SKIP instead");
     await c.stop();
   });
 
@@ -481,8 +488,51 @@ describe("ColonyPostClient", () => {
     await c.start();
     await vi.advanceTimersByTimeAsync(2001);
     const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
-    expect(prompt).not.toContain("pick something genuinely different");
+    expect(prompt).not.toContain("HARD RULE: do NOT post on a theme");
     await c.stop();
+  });
+
+  describe("length rotation (v0.33.0)", () => {
+    it("uses the legacy long rule when lengthMix is unset", async () => {
+      service.client.createPost.mockResolvedValue({ id: "p" });
+      const c = new ColonyPostClient(service as never, runtime, config());
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(prompt).toContain("3-6 paragraphs");
+      await c.stop();
+    });
+
+    it("picks the short rule when lengthMix=short", async () => {
+      service.client.createPost.mockResolvedValue({ id: "p" });
+      const c = new ColonyPostClient(service as never, runtime, config({ lengthMix: "short" }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(prompt).toContain("1-3 sentences");
+      expect(prompt).not.toContain("3-6 paragraphs");
+      await c.stop();
+    });
+
+    it("picks the medium rule when lengthMix=medium", async () => {
+      service.client.createPost.mockResolvedValue({ id: "p" });
+      const c = new ColonyPostClient(service as never, runtime, config({ lengthMix: "medium" }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(prompt).toContain("1-2 paragraphs");
+      await c.stop();
+    });
+
+    it("falls back to the legacy rule when all mix entries are invalid", async () => {
+      service.client.createPost.mockResolvedValue({ id: "p" });
+      const c = new ColonyPostClient(service as never, runtime, config({ lengthMix: "epic,novella" }));
+      await c.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      const prompt = runtime.useModel.mock.calls[0][1].prompt as string;
+      expect(prompt).toContain("3-6 paragraphs");
+      await c.stop();
+    });
   });
 
   it("catches unexpected errors in the outer tick loop", async () => {

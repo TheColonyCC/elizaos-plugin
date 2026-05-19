@@ -981,6 +981,7 @@ export class ColonyService extends Service {
         temperature: service.colonyConfig.postTemperature,
         styleHint: service.colonyConfig.postStyleHint,
         recentTopicMemory: service.colonyConfig.postRecentTopicMemory,
+        lengthMix: service.colonyConfig.postLengthMix,
         dryRun: service.colonyConfig.dryRun,
         selfCheck: service.colonyConfig.selfCheckEnabled,
         dailyLimit: service.colonyConfig.postDailyLimit,
