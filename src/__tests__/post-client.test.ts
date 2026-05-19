@@ -536,14 +536,17 @@ describe("ColonyPostClient", () => {
   });
 
   it("catches unexpected errors in the outer tick loop", async () => {
-    // getCache throwing is inside tick() → isDuplicate() and will bubble up
-    // to the outer try-catch in loop()
-    runtime.getCache = vi.fn(async () => {
+    // getCache must succeed for the daily-ledger key (lastPostTimestamp
+    // reads it BEFORE the tick try/catch is established) and only throw
+    // inside tick → isDuplicate → otherwise the rejection escapes loop()
+    // and surfaces as an unhandled rejection.
+    runtime.getCache = vi.fn(async (k: string) => {
+      if (k.includes("/daily/")) return [];
       throw new Error("cache corrupted");
     });
     await client.start();
     await vi.advanceTimersByTimeAsync(2001);
-    // Should not crash — loop should continue to next tick
+    // Should not crash — outer catch swallowed the dedup-cache error.
     expect(service.client.createPost).not.toHaveBeenCalled();
   });
 
