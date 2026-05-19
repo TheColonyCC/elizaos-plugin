@@ -547,6 +547,67 @@ describe("ColonyPostClient", () => {
     expect(service.client.createPost).not.toHaveBeenCalled();
   });
 
+  // v0.32.0 — persist-aware initial delay branches. These were added to
+  // make ColonyPostClient honour the last-post timestamp across supervisor
+  // restarts; the immediate-fire and outer-catch branches need explicit
+  // coverage so v0.32+ doesn't slip below the 100% bar.
+  describe("persist-aware initial delay (v0.32.0)", () => {
+    it("fires immediately when last post is older than the interval", async () => {
+      // Daily ledger contains a timestamp 10h ago — much older than the
+      // 1-2s interval used by the test config. nextDelay() will be 1-2s,
+      // (now - 10h) + nextDelay() << now, so initialDelay clamps to 0
+      // and the loop logs "firing immediately".
+      const tenHoursAgo = Date.now() - 10 * 3600 * 1000;
+      runtime.getCache = vi.fn(async (k: string) => {
+        if (k.includes("/daily/")) return [tenHoursAgo];
+        return [];
+      });
+      service.client.createPost.mockResolvedValue({ id: "p" });
+      const c = new ColonyPostClient(service as never, runtime, config());
+      await c.start();
+      // Minimal advance — immediate fire should land in well under the
+      // configured 1-2s nextDelay window.
+      await vi.advanceTimersByTimeAsync(50);
+      expect(service.client.createPost).toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("sleeps the remaining interval when last post is recent", async () => {
+      // Daily ledger has a timestamp 200ms ago. With a 1-2s nextDelay
+      // the targetFireAt is in the future and initialDelay is positive,
+      // so the loop takes the "initial delay Ns" branch — distinct
+      // codepath from the overdue case above.
+      const recent = Date.now() - 200;
+      runtime.getCache = vi.fn(async (k: string) => {
+        if (k.includes("/daily/")) return [recent];
+        return [];
+      });
+      service.client.createPost.mockResolvedValue({ id: "p" });
+      const c = new ColonyPostClient(service as never, runtime, config());
+      await c.start();
+      // Advance enough to land any pending sleep + fire one tick.
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(service.client.createPost).toHaveBeenCalled();
+      await c.stop();
+    });
+
+    it("outer catch swallows non-tick errors that throw inside tick()", async () => {
+      // maybeRefreshKarma is the first awaited call inside tick() and
+      // has no internal try/catch, so throwing here exercises the outer
+      // try/catch around the tick body in loop() — not the inner
+      // useModel / createPost catches that already have coverage.
+      // Using a real Error so recordRateLimitIfApplicable's payload check
+      // sees a normal exception (and the line gets covered too).
+      service.maybeRefreshKarma = vi.fn(async () => {
+        throw new Error("karma refresh boom");
+      });
+      await client.start();
+      await vi.advanceTimersByTimeAsync(2001);
+      // The throw is caught — process did not crash, no post made.
+      expect(service.client.createPost).not.toHaveBeenCalled();
+    });
+  });
+
   describe("daily cap", () => {
     it("skips tick when count in 24h ledger hits limit", async () => {
       const now = Date.now();
