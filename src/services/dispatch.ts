@@ -79,6 +79,21 @@ type RuntimeLike = {
   } | null;
 };
 
+/**
+ * A comment-shaped object used for rendering conversation topology into
+ * the dispatched Memory's text. Kept structurally minimal so callers can
+ * pass either a Colony SDK `Comment` directly or a freshly-projected
+ * subset.
+ */
+export interface DispatchCommentLike {
+  /** Stable comment id. Used by the pre-dispatch validator to verify the dispatched reply targets the same comment that surfaced in the prompt. */
+  id?: string;
+  author?: { username?: string };
+  body?: string;
+  /** ISO 8601 timestamp; rendered as part of the target anchor when present. */
+  created_at?: string;
+}
+
 export interface DispatchPostMentionParams {
   /** Memory id key — a stable string derived from the event id (notification/delivery/comment). */
   memoryIdKey: string;
@@ -105,6 +120,34 @@ export interface DispatchPostMentionParams {
    * threads under the comment that triggered it.
    */
   parentCommentId?: string;
+  /**
+   * The specific comment we are replying to, when this dispatch was
+   * triggered by a `reply_to_comment` / `reply_to_my_comment` / mention-
+   * inside-a-comment notification. Rendered as an explicit "REPLY TARGET"
+   * section in the Memory text so the LLM has a structural anchor rather
+   * than having to infer the target from chronological ordering. When set
+   * AND `parentCommentId` is also set, the dispatcher enforces that
+   * `targetComment.id === parentCommentId` — a pre-dispatch validator that
+   * catches future refactors which would desynchronise the surfaced anchor
+   * from the destination the reply is actually cast at.
+   *
+   * Symmetric with the langchain-colony PR #37 fix (`reply_to_comment` was
+   * missing from `_ENRICH_TYPES_COMMENT` there). plugin-colony's dual
+   * problem: the data was present in the Memory object but the *shape*
+   * (chronological-flat) made the right `parent_id` unrecoverable from the
+   * prompt context. See https://thecolony.cc/post/6dda8822-c9b4-4c47-b401-65823a1c351d
+   * (eliza-gemma's analysis) + https://thecolony.cc/post/ec2eed73-27fc-47d4-a0fb-626888b3606d
+   * (sibling 108/108 case on langchain-colony).
+   */
+  targetComment?: DispatchCommentLike;
+  /**
+   * Ancestor chain of the target comment, ordered root-first (oldest ancestor
+   * first, immediate parent last). Rendered as a tree-shaped ancestry section
+   * distinct from `threadComments` so the LLM sees who-replied-to-whom rather
+   * than a chronologically flattened buffer. Omit for top-level comments or
+   * when the chain isn't available.
+   */
+  parentChain?: DispatchCommentLike[];
 }
 
 /**
@@ -165,11 +208,59 @@ export async function dispatchPostMention(
     });
   }
 
+  // Pre-dispatch validator: when both `targetComment` and `parentCommentId`
+  // are set they must point at the same comment, otherwise the LLM is being
+  // shown one anchor in the prompt while the reply is cast at a different
+  // destination — exactly the desynchronisation that produced the langford
+  // 108/108 mis-routing class of bug on the sibling stack. Log loudly and
+  // continue (fail-open) rather than aborting the dispatch, so a refactor
+  // bug surfaces in logs without breaking the host process.
+  if (
+    params.targetComment?.id &&
+    params.parentCommentId &&
+    params.targetComment.id !== params.parentCommentId
+  ) {
+    logger.warn(
+      `COLONY_DISPATCH: targetComment.id (${params.targetComment.id}) ≠ parentCommentId (${params.parentCommentId}) on post ${params.postId} — anchor mismatch, the surfaced REPLY TARGET in the prompt is not the comment the reply will be cast at. Check the call site that constructed DispatchPostMentionParams.`,
+    );
+  }
+
+  const ancestryBlock =
+    params.parentChain && params.parentChain.length
+      ? [
+          "",
+          `Ancestry (root → immediate parent of the target, ${params.parentChain.length} step${params.parentChain.length === 1 ? "" : "s"}):`,
+          ...params.parentChain.map((c, i) => {
+            const by = c.author?.username ?? "unknown";
+            const body = (c.body ?? "").slice(0, 500);
+            const indent = "  ".repeat(i);
+            return `${indent}↳ @${by}: ${body}`;
+          }),
+        ].join("\n")
+      : "";
+
+  const targetBlock = params.targetComment
+    ? (() => {
+        const by = params.targetComment.author?.username ?? "unknown";
+        const body = (params.targetComment.body ?? "").slice(0, 1500);
+        const at = params.targetComment.created_at
+          ? ` (at ${params.targetComment.created_at})`
+          : "";
+        return [
+          "",
+          `🎯 REPLY TARGET — your reply will be cast under THIS comment, not the chronologically-last one in the thread. Address THIS comment's author and content:`,
+          `@${by}${at}: ${body}`,
+        ].join("\n");
+      })()
+    : "";
+
   const threadBlock =
     params.threadComments && params.threadComments.length
       ? [
           "",
-          `Recent comments on the thread (${params.threadComments.length}):`,
+          params.targetComment
+            ? `Other comments on the thread for context (NOT the reply target — see above):`
+            : `Recent comments on the thread (${params.threadComments.length}):`,
           ...params.threadComments.map((c, i) => {
             const by = c.author?.username ?? "unknown";
             const body = (c.body ?? "").slice(0, 500);
@@ -185,7 +276,7 @@ export async function dispatchPostMention(
     roomId: roomId as Memory["roomId"],
     worldId: worldId as Memory["worldId"],
     content: {
-      text: [params.postTitle, params.postBody, threadBlock]
+      text: [params.postTitle, params.postBody, ancestryBlock, targetBlock, threadBlock]
         .filter(Boolean)
         .join("\n\n"),
       source: "colony",

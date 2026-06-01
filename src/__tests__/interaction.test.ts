@@ -745,4 +745,235 @@ describe("ColonyInteractionClient", () => {
       expect(runtime.createMemory).toHaveBeenCalled();
     });
   });
+
+  describe("conversation-tree topology (post-v0.33 fix)", () => {
+    it("walks the parent chain root-first and surfaces the target via getAllComments", async () => {
+      service.colonyConfig.mentionThreadComments = 2;
+      service.client.getNotifications.mockResolvedValue([
+        notif({
+          notification_type: "reply_to_comment",
+          comment_id: "c-target",
+        }),
+      ]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      // Full comment graph: c-root → c-mid → c-target; plus two siblings.
+      (service.client as unknown as Record<string, unknown>).getAllComments = vi.fn(async () => [
+        { id: "c-root", parent_id: null, author: { username: "eve" }, body: "root", created_at: "2026-06-01T09:00:00Z" },
+        { id: "c-mid", parent_id: "c-root", author: { username: "frank" }, body: "middle", created_at: "2026-06-01T09:30:00Z" },
+        { id: "c-target", parent_id: "c-mid", author: { username: "carol" }, body: "leaf-target", created_at: "2026-06-01T10:00:00Z" },
+        { id: "c-sib1", parent_id: null, author: { username: "alice" }, body: "sibling A" },
+        { id: "c-sib2", parent_id: null, author: { username: "bob" }, body: "sibling B" },
+      ]);
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      const memoryCall = runtime.createMemory.mock.calls[0];
+      const text = (memoryCall?.[0] as { content?: { text?: string } }).content?.text ?? "";
+      expect(text).toContain("REPLY TARGET");
+      expect(text).toContain("@carol");
+      expect(text).toContain("leaf-target");
+      expect(text).toContain("Ancestry");
+      expect(text).toContain("@eve");
+      expect(text).toContain("@frank");
+      expect(text).toContain("↳");
+      // siblings rendered as "Other comments" context, not as target
+      expect(text).toContain("Other comments on the thread");
+      expect(text).toContain("@alice");
+      // ancestry appears before target appears before other-comments
+      expect(text.indexOf("Ancestry")).toBeLessThan(text.indexOf("REPLY TARGET"));
+      expect(text.indexOf("REPLY TARGET")).toBeLessThan(text.indexOf("Other comments"));
+    });
+
+    it("handles a top-level target (no ancestry, no Ancestry section)", async () => {
+      service.colonyConfig.mentionThreadComments = 2;
+      service.client.getNotifications.mockResolvedValue([
+        notif({
+          notification_type: "reply_to_my_comment",
+          comment_id: "c-top",
+        }),
+      ]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      (service.client as unknown as Record<string, unknown>).getAllComments = vi.fn(async () => [
+        { id: "c-top", parent_id: null, author: { username: "carol" }, body: "top-level" },
+        { id: "c-other", parent_id: null, author: { username: "alice" }, body: "sibling" },
+      ]);
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      const memoryCall = runtime.createMemory.mock.calls[0];
+      const text = (memoryCall?.[0] as { content?: { text?: string } }).content?.text ?? "";
+      expect(text).toContain("REPLY TARGET");
+      expect(text).toContain("@carol");
+      expect(text).not.toContain("Ancestry");
+    });
+
+    it("falls through to legacy getComments path when target id is not in the fetched set", async () => {
+      service.colonyConfig.mentionThreadComments = 2;
+      service.client.getNotifications.mockResolvedValue([
+        notif({
+          notification_type: "reply_to_comment",
+          comment_id: "c-missing",
+        }),
+      ]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      (service.client as unknown as Record<string, unknown>).getAllComments = vi.fn(async () => [
+        { id: "c-other", parent_id: null, author: { username: "alice" }, body: "unrelated" },
+      ]);
+      const getCommentsSpy = vi.fn(async () => [
+        { id: "c-other", author: { username: "alice" }, body: "unrelated" },
+      ]);
+      (service.client as unknown as Record<string, unknown>).getComments = getCommentsSpy;
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      const memoryCall = runtime.createMemory.mock.calls[0];
+      const text = (memoryCall?.[0] as { content?: { text?: string } }).content?.text ?? "";
+      // Legacy path means no REPLY TARGET section but threadComments are rendered.
+      expect(text).not.toContain("REPLY TARGET");
+      expect(text).toContain("Recent comments on the thread");
+      expect(getCommentsSpy).toHaveBeenCalled();
+    });
+
+    it("falls through to legacy when getAllComments throws", async () => {
+      service.colonyConfig.mentionThreadComments = 1;
+      service.client.getNotifications.mockResolvedValue([
+        notif({
+          notification_type: "reply_to_comment",
+          comment_id: "c-target",
+        }),
+      ]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      (service.client as unknown as Record<string, unknown>).getAllComments = vi.fn(async () => {
+        throw new Error("network");
+      });
+      const getCommentsSpy = vi.fn(async () => []);
+      (service.client as unknown as Record<string, unknown>).getComments = getCommentsSpy;
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getCommentsSpy).toHaveBeenCalled();
+      expect(runtime.createMemory).toHaveBeenCalled();
+    });
+
+    it("legacy path also returns empty when getAllComments throws AND getComments is unavailable", async () => {
+      service.colonyConfig.mentionThreadComments = 1;
+      service.client.getNotifications.mockResolvedValue([
+        notif({
+          notification_type: "reply_to_comment",
+          comment_id: "c-target",
+        }),
+      ]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      (service.client as unknown as Record<string, unknown>).getAllComments = vi.fn(async () => {
+        throw new Error("down");
+      });
+      delete (service.client as unknown as Record<string, unknown>).getComments;
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runtime.createMemory).toHaveBeenCalled();
+    });
+
+    it("terminates parent walk on a cycle without infinite-looping", async () => {
+      service.colonyConfig.mentionThreadComments = 0;
+      service.client.getNotifications.mockResolvedValue([
+        notif({
+          notification_type: "reply_to_comment",
+          comment_id: "c-A",
+        }),
+      ]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      // A → B → A cycle. Walker must visit B once and stop.
+      (service.client as unknown as Record<string, unknown>).getAllComments = vi.fn(async () => [
+        { id: "c-A", parent_id: "c-B", author: { username: "carol" }, body: "A" },
+        { id: "c-B", parent_id: "c-A", author: { username: "dave" }, body: "B" },
+      ]);
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      const memoryCall = runtime.createMemory.mock.calls[0];
+      const text = (memoryCall?.[0] as { content?: { text?: string } }).content?.text ?? "";
+      expect(text).toContain("REPLY TARGET");
+      expect(text).toContain("@carol");
+      // The single non-target node (c-B / @dave) appears in the ancestry exactly once.
+      expect((text.match(/@dave/g) ?? []).length).toBe(1);
+    });
+
+    it("projects comments with missing or malformed author fields gracefully", async () => {
+      service.colonyConfig.mentionThreadComments = 0;
+      service.client.getNotifications.mockResolvedValue([
+        notif({
+          notification_type: "reply_to_comment",
+          comment_id: "c-T",
+        }),
+      ]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      // Mix author shapes: object-with-username, object-without-username, non-object author, missing author.
+      (service.client as unknown as Record<string, unknown>).getAllComments = vi.fn(async () => [
+        { id: "c-P", parent_id: null, author: { username: "carol" }, body: "parent" },
+        { id: "c-T", parent_id: "c-P", author: 42, body: "target with weird author" },
+        // sibling-style entries excluded by count=0
+      ]);
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      const memoryCall = runtime.createMemory.mock.calls[0];
+      const text = (memoryCall?.[0] as { content?: { text?: string } }).content?.text ?? "";
+      // target's author was non-object, projectComment returns undefined author,
+      // dispatch renders "@unknown:" as the fallback.
+      expect(text).toContain("REPLY TARGET");
+      expect(text).toContain("target with weird author");
+      expect(text).toContain("@unknown");
+      // parent had a proper author shape — covers the truthy `author && typeof === 'object'` branch.
+      expect(text).toContain("@carol");
+    });
+
+    it("does not call getAllComments when notification is not a reply_to_comment", async () => {
+      service.colonyConfig.mentionThreadComments = 1;
+      service.client.getNotifications.mockResolvedValue([
+        notif({ notification_type: "mention", comment_id: "c-irrelevant" }),
+      ]);
+      service.client.getPost.mockResolvedValue({
+        id: "post-1",
+        title: "T",
+        body: "B",
+        author: { username: "u" },
+      });
+      const getAllSpy = vi.fn();
+      (service.client as unknown as Record<string, unknown>).getAllComments = getAllSpy;
+      (service.client as unknown as Record<string, unknown>).getComments = vi.fn(async () => []);
+      await client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      // Mention notifications take the legacy path, not the reply-target path.
+      expect(getAllSpy).not.toHaveBeenCalled();
+    });
+  });
 });

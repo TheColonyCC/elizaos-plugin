@@ -108,6 +108,123 @@ describe("dispatchPostMention — internal dedup", () => {
     expect(memoryArg.content?.text).toContain("@unknown:");
     expect(memoryArg.content?.text).toContain("@bob:");
   });
+
+  it("surfaces an explicit REPLY TARGET section when targetComment is passed (conversation-tree fix)", async () => {
+    const rt = mockRuntime();
+    const memorySpy = rt.createMemory;
+    await dispatchPostMention(service as never, rt, {
+      memoryIdKey: "with-target",
+      postId: "p-tree",
+      postTitle: "Title",
+      postBody: "Body",
+      authorUsername: "alice",
+      parentCommentId: "c-target",
+      targetComment: {
+        id: "c-target",
+        author: { username: "carol" },
+        body: "Specific question I want a reply to",
+        created_at: "2026-06-01T10:00:00Z",
+      },
+      threadComments: [
+        { author: { username: "dave" }, body: "Unrelated side-comment that arrived later" },
+      ],
+    });
+    const call = memorySpy.mock.calls[0];
+    const text = (call?.[0] as { content?: { text?: string } }).content?.text ?? "";
+    expect(text).toContain("REPLY TARGET");
+    expect(text).toContain("@carol");
+    expect(text).toContain("Specific question I want a reply to");
+    expect(text).toContain("2026-06-01T10:00:00Z");
+    expect(text).toContain("Other comments on the thread for context");
+    expect(text).toContain("@dave");
+    // The target section must appear before the "other comments" section
+    // so the LLM anchors on it first.
+    expect(text.indexOf("REPLY TARGET")).toBeLessThan(text.indexOf("Other comments"));
+  });
+
+  it("renders parentChain as tree-shaped ancestry above the target", async () => {
+    const rt = mockRuntime();
+    const memorySpy = rt.createMemory;
+    await dispatchPostMention(service as never, rt, {
+      memoryIdKey: "with-ancestry",
+      postId: "p-ancestry",
+      postTitle: "T",
+      postBody: "B",
+      authorUsername: "alice",
+      parentCommentId: "c-target",
+      targetComment: { id: "c-target", author: { username: "carol" }, body: "leaf" },
+      parentChain: [
+        { id: "c-root", author: { username: "eve" }, body: "root comment" },
+        { id: "c-mid", author: { username: "frank" }, body: "middle reply" },
+      ],
+    });
+    const call = memorySpy.mock.calls[0];
+    const text = (call?.[0] as { content?: { text?: string } }).content?.text ?? "";
+    expect(text).toContain("Ancestry");
+    expect(text).toContain("@eve");
+    expect(text).toContain("@frank");
+    expect(text).toContain("↳");
+    // Ancestry appears above the target.
+    expect(text.indexOf("Ancestry")).toBeLessThan(text.indexOf("REPLY TARGET"));
+  });
+
+  it("warns when targetComment.id and parentCommentId disagree (pre-dispatch validator)", async () => {
+    const rt = mockRuntime();
+    const logSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const elizaLog = await import("@elizaos/core").then((m) => m.logger);
+    const elizaWarn = vi.spyOn(elizaLog, "warn").mockImplementation((..._args: unknown[]) => undefined as never);
+    await dispatchPostMention(service as never, rt, {
+      memoryIdKey: "mismatch",
+      postId: "p-mismatch",
+      postTitle: "T",
+      postBody: "B",
+      authorUsername: "alice",
+      parentCommentId: "c-A",
+      targetComment: { id: "c-B", author: { username: "carol" }, body: "x" },
+    });
+    expect(elizaWarn).toHaveBeenCalledWith(
+      expect.stringContaining("anchor mismatch"),
+    );
+    elizaWarn.mockRestore();
+    logSpy.mockRestore();
+  });
+
+  it("does NOT warn when targetComment.id and parentCommentId match", async () => {
+    const rt = mockRuntime();
+    const elizaLog = await import("@elizaos/core").then((m) => m.logger);
+    const elizaWarn = vi.spyOn(elizaLog, "warn").mockImplementation((..._args: unknown[]) => undefined as never);
+    await dispatchPostMention(service as never, rt, {
+      memoryIdKey: "matched",
+      postId: "p-matched",
+      postTitle: "T",
+      postBody: "B",
+      authorUsername: "alice",
+      parentCommentId: "c-same",
+      targetComment: { id: "c-same", author: { username: "carol" }, body: "x" },
+    });
+    expect(elizaWarn).not.toHaveBeenCalledWith(
+      expect.stringContaining("anchor mismatch"),
+    );
+    elizaWarn.mockRestore();
+  });
+
+  it("legacy path (no targetComment) preserves the old threadComments-only rendering", async () => {
+    const rt = mockRuntime();
+    const memorySpy = rt.createMemory;
+    await dispatchPostMention(service as never, rt, {
+      memoryIdKey: "legacy",
+      postId: "p-legacy",
+      postTitle: "T",
+      postBody: "B",
+      authorUsername: "alice",
+      threadComments: [{ author: { username: "bob" }, body: "hi" }],
+    });
+    const call = memorySpy.mock.calls[0];
+    const text = (call?.[0] as { content?: { text?: string } }).content?.text ?? "";
+    expect(text).toContain("Recent comments on the thread");
+    expect(text).not.toContain("REPLY TARGET");
+    expect(text).not.toContain("Ancestry");
+  });
 });
 
 describe("dispatchDirectMessage — internal dedup", () => {
