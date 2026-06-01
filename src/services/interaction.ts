@@ -519,8 +519,6 @@ export class ColonyInteractionClient {
       }
     }
 
-    const threadComments = await this.fetchThreadComments(notification.post_id);
-
     // v0.14.0: thread the reply under the originating comment when the
     // notification was for a reply-to-comment. Otherwise the agent would
     // reply to the root post, losing the conversation's thread structure.
@@ -531,6 +529,21 @@ export class ColonyInteractionClient {
         ? notification.comment_id
         : undefined;
 
+    // Memory-flattening fix (post-v0.33): when the notification is a
+    // reply-to-comment, surface the *target* comment + its ancestry chain
+    // explicitly in the dispatched Memory text. Without these, the LLM
+    // anchors on whatever happens to be chronologically last in the thread
+    // buffer rather than the structural target the reply is actually cast
+    // at. See https://thecolony.cc/post/6dda8822-c9b4-4c47-b401-65823a1c351d
+    // for the diagnosis on this stack and ec2eed73-... for the sibling
+    // 108/108 case on langchain-colony (which fixed the same symptom by
+    // adding `reply_to_comment` to `_ENRICH_TYPES_COMMENT`).
+    const { targetComment, parentChain, threadComments } =
+      await this.fetchConversationTopology(
+        notification.post_id,
+        parentCommentId,
+      );
+
     await dispatchPostMention(this.service, this.runtime, {
       memoryIdKey,
       postId: notification.post_id,
@@ -540,39 +553,135 @@ export class ColonyInteractionClient {
       createdAt: notification.created_at,
       threadComments,
       parentCommentId,
+      targetComment,
+      parentChain,
     });
 
     await this.markRead(notification.id);
   }
 
   /**
-   * Fetch up to `mentionThreadComments` top-level comments on the
-   * mention-bearing post, so the dispatched memory includes the
-   * conversation around the mention rather than just the post itself.
-   * Best-effort: errors are swallowed and the dispatch proceeds without
-   * thread context.
+   * Fetch top thread comments plus, when `targetCommentId` is set, the
+   * target comment itself and its ancestry chain (root → immediate parent).
+   *
+   * When no `targetCommentId` is given, falls back to the v0.14-era
+   * top-level-comments-only behaviour (a paginated `getComments(postId, 1)`
+   * call) — preserving the prompt shape for mentions/posts that aren't
+   * reply-to-comment notifications.
+   *
+   * When `targetCommentId` is set, we use `getAllComments(postId)` so we
+   * have the full comment graph in memory and can walk the `parent_id`
+   * chain. The walker is bounded by the size of the fetched list, so it
+   * cannot loop on cyclic data; cycles would terminate at the first revisit.
+   * Failures fail-open: dispatch proceeds with whatever data we got.
    */
-  private async fetchThreadComments(
+  private async fetchConversationTopology(
     postId: string,
-  ): Promise<Array<{ author?: { username?: string }; body?: string }>> {
+    targetCommentId: string | undefined,
+  ): Promise<{
+    targetComment?: { id?: string; author?: { username?: string }; body?: string; created_at?: string };
+    parentChain?: Array<{ id?: string; author?: { username?: string }; body?: string }>;
+    threadComments: Array<{ author?: { username?: string }; body?: string }>;
+  }> {
     const count = this.service.colonyConfig.mentionThreadComments;
-    if (!count || count <= 0) return [];
+    if ((!count || count <= 0) && !targetCommentId) {
+      return { threadComments: [] };
+    }
+
     const client = this.service.client as unknown as {
       getComments?: (id: string, page?: number) => Promise<unknown>;
+      getAllComments?: (id: string) => Promise<Array<Record<string, unknown>>>;
     };
-    if (typeof client.getComments !== "function") return [];
+
+    // Reply-to-comment path: pull the full comment graph so we can resolve
+    // the target + ancestry deterministically.
+    if (targetCommentId && typeof client.getAllComments === "function") {
+      try {
+        const all = await client.getAllComments(postId);
+        const byId = new Map<string, Record<string, unknown>>();
+        for (const c of all) {
+          const id = c?.["id"];
+          if (typeof id === "string") byId.set(id, c);
+        }
+        const target = byId.get(targetCommentId);
+        if (target) {
+          // Walk parent chain — root-first.
+          const chain: Array<Record<string, unknown>> = [];
+          const visited = new Set<string>();
+          let cursor = target?.["parent_id"];
+          while (typeof cursor === "string" && byId.has(cursor) && !visited.has(cursor)) {
+            visited.add(cursor);
+            const node = byId.get(cursor);
+            if (!node) break;
+            chain.unshift(node);
+            cursor = node?.["parent_id"];
+          }
+
+          // Other-comment context: top-level comments other than the target.
+          const limit = count && count > 0 ? count : 0;
+          const others = limit
+            ? all
+                .filter((c) => c?.["parent_id"] == null && c?.["id"] !== targetCommentId)
+                .slice(0, limit)
+            : [];
+
+          return {
+            targetComment: this.projectComment(target),
+            parentChain: chain.map((c) => this.projectComment(c)),
+            threadComments: others.map((c) => this.projectComment(c)),
+          };
+        }
+        // Target not found in the fetched set — fall through to legacy
+        // top-level fetch so the dispatch still gets context. The
+        // parentCommentId on the createComment call is unaffected.
+        logger.debug(
+          `COLONY_INTERACTION: target comment ${targetCommentId} not found in getAllComments(${postId}); falling back to top-level context only`,
+        );
+      } catch (err) {
+        logger.debug(
+          `COLONY_INTERACTION: getAllComments(${postId}) failed, falling back to getComments: ${String(err)}`,
+        );
+      }
+    }
+
+    // Legacy path: top-level page-1 comments only.
+    if (!count || count <= 0) return { threadComments: [] };
+    if (typeof client.getComments !== "function") return { threadComments: [] };
     try {
       const result = await client.getComments(postId, 1);
       const items = Array.isArray(result)
-        ? (result as Array<{ author?: { username?: string }; body?: string }>)
-        : (result as { items?: Array<{ author?: { username?: string }; body?: string }> })?.items ?? [];
-      return items.slice(0, count);
+        ? (result as Array<Record<string, unknown>>)
+        : ((result as { items?: Array<Record<string, unknown>> })?.items ?? []);
+      return {
+        threadComments: items.slice(0, count).map((c) => this.projectComment(c)),
+      };
     } catch (err) {
       logger.debug(
         `COLONY_INTERACTION: getComments(${postId}) failed, dispatching without thread context: ${String(err)}`,
       );
-      return [];
+      return { threadComments: [] };
     }
+  }
+
+  /**
+   * Project an SDK Comment-shaped value (or anything keyed similarly) into
+   * the minimal shape `dispatch.ts` consumes. Tolerant of missing fields so
+   * callers can pass either an SDK `Comment` directly or a thinner subset.
+   */
+  private projectComment(
+    c: Record<string, unknown> | undefined,
+  ): { id?: string; author?: { username?: string }; body?: string; created_at?: string } {
+    if (!c) return {};
+    const authorRaw = c["author"] as { username?: unknown } | undefined;
+    return {
+      id: typeof c["id"] === "string" ? (c["id"] as string) : undefined,
+      author:
+        authorRaw && typeof authorRaw === "object"
+          ? { username: typeof authorRaw.username === "string" ? authorRaw.username : undefined }
+          : undefined,
+      body: typeof c["body"] === "string" ? (c["body"] as string) : undefined,
+      created_at: typeof c["created_at"] === "string" ? (c["created_at"] as string) : undefined,
+    };
   }
 
   /**
