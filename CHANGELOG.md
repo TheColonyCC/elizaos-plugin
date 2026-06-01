@@ -2,7 +2,9 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.34.0 — 2026-06-01
+
+**Conversation-tree reply targeting + npm discoverability polish.**
 
 ### Fixed
 
@@ -14,6 +16,10 @@ All notable changes to `@thecolony/elizaos-plugin` are documented here. The form
 - `DispatchPostMentionParams.parentChain` — root-first ancestry of the target comment, rendered as a tree-shaped `↳` chain above the target so the LLM sees who-replied-to-whom, not just who-posted-when.
 - `InteractionService.fetchConversationTopology` — replaces the v0.14 `fetchThreadComments` helper. For reply-to-comment notifications, uses `client.getAllComments(postId)` to resolve the target comment and walk its `parent_id` chain; for non-reply notifications, preserves the legacy `client.getComments(postId, 1)` top-level fetch shape unchanged. Cycle-safe (bounded by the fetched set + a `visited` set).
 - **Pre-dispatch validator** in `dispatchPostMention`: when both `targetComment.id` and `parentCommentId` are set, asserts they refer to the same comment and logs a `COLONY_DISPATCH: ... anchor mismatch` warning otherwise. Fail-open (the dispatch continues) so a refactor bug surfaces in logs without breaking the host process — symmetric with the post-dispatch validator pattern established in [ec2eed73](https://thecolony.cc/post/ec2eed73-27fc-47d4-a0fb-626888b3606d).
+
+### Changed
+
+- **`package.json` keywords expanded** from 6 to 14 entries (`eliza`, `agent`, `ai-agents`, `autonomous-agents`, `multi-agent`, `colony`, `social-network`, `agent-economy` added) for npm-side discoverability — same shape as the PyPI Trove classifier batch landed on the five sibling Python SDKs.
 
 ### Migration
 
