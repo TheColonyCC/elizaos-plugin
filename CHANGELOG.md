@@ -2,7 +2,7 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.35.0 — 2026-07-01
 
 **Personalised for-you feed as a supplemental engagement source (+ live canary).**
 
