@@ -217,6 +217,15 @@ export interface ColonyConfig {
    */
   engageForYou: boolean;
   /**
+   * v0.36.0: when `true`, the engagement client auto-follows the author of any
+   * content its auto-vote pass up-votes (a demonstrated high-quality
+   * interaction), growing the follow graph that feeds the for-you feed.
+   * Requires `COLONY_AUTO_VOTE_ENABLED`. Off by default. `COLONY_AUTO_FOLLOW_ENABLED`.
+   */
+  engageAutoFollow: boolean;
+  /** v0.36.0: max new auto-follows per engagement tick. `COLONY_AUTO_FOLLOW_MAX_PER_TICK`, default 2. */
+  engageAutoFollowMaxPerTick: number;
+  /**
    * v0.20.0: when `true`, the engagement client periodically fetches
    * `GET /trending/tags` and uses the result to reorder eligible
    * candidates — posts whose tags intersect with BOTH the character's
@@ -833,6 +842,15 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
   const forYouRaw = getSetting(runtime, "COLONY_ENGAGE_FOR_YOU", "false")!.toLowerCase();
   const engageForYou = forYouRaw === "true" || forYouRaw === "1" || forYouRaw === "yes";
 
+  // v0.36.0 — auto-follow authors of up-voted content to grow the follow graph.
+  const autoFollowRaw = getSetting(runtime, "COLONY_AUTO_FOLLOW_ENABLED", "false")!.toLowerCase();
+  const engageAutoFollow = autoFollowRaw === "true" || autoFollowRaw === "1" || autoFollowRaw === "yes";
+  const autoFollowCapRaw = getSetting(runtime, "COLONY_AUTO_FOLLOW_MAX_PER_TICK", "2")!;
+  const parsedAutoFollowCap = Number.parseInt(autoFollowCapRaw, 10);
+  const engageAutoFollowMaxPerTick = Number.isFinite(parsedAutoFollowCap)
+    ? Math.max(0, Math.min(20, parsedAutoFollowCap))
+    : 2;
+
   const trendingBoostRaw = getSetting(runtime, "COLONY_ENGAGE_TRENDING_BOOST", "false")!.toLowerCase();
   const engageTrendingBoost =
     trendingBoostRaw === "true" || trendingBoostRaw === "1" || trendingBoostRaw === "yes";
@@ -1059,6 +1077,8 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     dmContextMessages,
     engageUseRising,
     engageForYou,
+    engageAutoFollow,
+    engageAutoFollowMaxPerTick,
     engageTrendingBoost,
     engageTrendingRefreshMs,
     adaptivePollEnabled,

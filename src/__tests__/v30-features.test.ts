@@ -705,6 +705,85 @@ describe("v0.30.0 — engagement-client auto-vote integration", () => {
     expect(service.incrementStat).toHaveBeenCalledWith("autoUpvotesCast");
   });
 
+  it("autoFollow=true: follows the author of an up-voted post", async () => {
+    service.client.getPosts.mockResolvedValue({
+      items: [
+        { id: "p1", title: "X", body: "Y", author: { id: "u-alice", username: "alice" } },
+      ],
+    });
+    let n = 0;
+    runtime.useModel = vi.fn(async () => (++n === 1 ? "EXCELLENT" : "A substantive reply."));
+    client = new ColonyEngagementClient(
+      service as never,
+      runtime,
+      eClientConfig({
+        autoVoteEnabled: true,
+        autoDownvoteEnabled: false,
+        autoVoteMaxPerTick: 5,
+        autoVoteIncludeComments: false,
+        autoFollow: true,
+        autoFollowMaxPerTick: 2,
+      }),
+    );
+    await client.start();
+    await vi.advanceTimersByTimeAsync(2001);
+    expect(service.client.follow).toHaveBeenCalledWith("u-alice");
+  });
+
+  it("autoFollow=true: a follow failure (e.g. 409 already-following) is non-fatal", async () => {
+    service.client.getPosts.mockResolvedValue({
+      items: [
+        { id: "p1", title: "X", body: "Y", author: { id: "u-bob", username: "bob" } },
+      ],
+    });
+    service.client.follow.mockRejectedValue(new Error("409 already following"));
+    let n = 0;
+    runtime.useModel = vi.fn(async () => (++n === 1 ? "EXCELLENT" : "A reply."));
+    client = new ColonyEngagementClient(
+      service as never,
+      runtime,
+      eClientConfig({
+        autoVoteEnabled: true,
+        autoVoteIncludeComments: false,
+        autoFollow: true,
+      }),
+    );
+    await client.start();
+    await vi.advanceTimersByTimeAsync(2001);
+    expect(service.client.follow).toHaveBeenCalledWith("u-bob");
+    // engagement still completes despite the follow error (non-fatal)
+    expect(service.client.createComment).toHaveBeenCalled();
+  });
+
+  it("autoFollow=true: follows the author of an up-voted thread COMMENT", async () => {
+    service.client.getPosts.mockResolvedValue({
+      items: [
+        { id: "p1", title: "X", body: "Y", author: { id: "u-poster", username: "poster" } },
+      ],
+    });
+    const cl = service.client as unknown as { getComments: ReturnType<typeof vi.fn> };
+    cl.getComments = vi.fn(async () => ({
+      items: [{ id: "c1", body: "a great point", author: { id: "u-commenter", username: "commenter" } }],
+    }));
+    let n = 0;
+    // post score, comment score, then reply generation.
+    runtime.useModel = vi.fn(async () => (++n <= 2 ? "EXCELLENT" : "A reply."));
+    client = new ColonyEngagementClient(
+      service as never,
+      runtime,
+      eClientConfig({
+        autoVoteEnabled: true,
+        autoVoteIncludeComments: true,
+        threadComments: 1,
+        autoFollow: true,
+        autoFollowMaxPerTick: 5,
+      }),
+    );
+    await client.start();
+    await vi.advanceTimersByTimeAsync(2001);
+    expect(service.client.follow).toHaveBeenCalledWith("u-commenter");
+  });
+
   it("SPAM candidate post + downvote enabled: downvote AND skip engagement", async () => {
     service.client.getPosts.mockResolvedValue({
       items: [

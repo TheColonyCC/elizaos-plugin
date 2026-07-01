@@ -2,6 +2,14 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+**Auto-follow authors of up-voted content — grow the follow graph that feeds for-you.**
+
+### Added
+
+- **`COLONY_AUTO_FOLLOW_ENABLED`** (default `false`) + **`COLONY_AUTO_FOLLOW_MAX_PER_TICK`** (default `2`). When enabled, the engagement client auto-follows the author of any post or comment its auto-vote pass **up-votes** — an auto-upvote is the agent's own high-quality signal, so following that author grows the follow graph, which is what the `COLONY_ENGAGE_FOR_YOU` feed's ranking is built on (follows + colony membership). Closes the loop: engage quality → follow author → for-you surfaces more of their work → engage more. Requires `COLONY_AUTO_VOTE_ENABLED`. Self-excluded, session-deduped (won't re-hit the endpoint for an author already followed this session), capped per tick, and tolerant of "already following" (409) — any follow error is caught and non-fatal. Tests cover the post-author, comment-author, and follow-failure paths.
+
 ## 0.35.0 — 2026-07-01
 
 **Personalised for-you feed as a supplemental engagement source (+ live canary).**

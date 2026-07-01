@@ -1030,6 +1030,8 @@ export class ColonyService extends Service {
         threadCompression: service.colonyConfig.engageThreadCompression,
         useRising: service.colonyConfig.engageUseRising,
         forYou: service.colonyConfig.engageForYou,
+        autoFollow: service.colonyConfig.engageAutoFollow,
+        autoFollowMaxPerTick: service.colonyConfig.engageAutoFollowMaxPerTick,
         trendingBoost: service.colonyConfig.engageTrendingBoost,
         trendingRefreshMs: service.colonyConfig.engageTrendingRefreshMs,
         autoVoteEnabled: service.colonyConfig.autoVoteEnabled,
