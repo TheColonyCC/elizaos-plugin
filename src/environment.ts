@@ -210,6 +210,13 @@ export interface ColonyConfig {
    */
   engageUseRising: boolean;
   /**
+   * v0.35.0: when `true`, the engagement client also pulls the personalised
+   * for-you feed (`GET /feed/for-you`) and merges its posts into the candidate
+   * pool — supplementing, never replacing, the per-colony/rising source. Also
+   * serves as a live canary on the endpoint. Off by default. `COLONY_ENGAGE_FOR_YOU`.
+   */
+  engageForYou: boolean;
+  /**
    * v0.20.0: when `true`, the engagement client periodically fetches
    * `GET /trending/tags` and uses the result to reorder eligible
    * candidates — posts whose tags intersect with BOTH the character's
@@ -822,6 +829,10 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
   const useRisingRaw = getSetting(runtime, "COLONY_ENGAGE_USE_RISING", "false")!.toLowerCase();
   const engageUseRising = useRisingRaw === "true" || useRisingRaw === "1" || useRisingRaw === "yes";
 
+  // v0.35.0 — supplement candidates with the personalised for-you feed.
+  const forYouRaw = getSetting(runtime, "COLONY_ENGAGE_FOR_YOU", "false")!.toLowerCase();
+  const engageForYou = forYouRaw === "true" || forYouRaw === "1" || forYouRaw === "yes";
+
   const trendingBoostRaw = getSetting(runtime, "COLONY_ENGAGE_TRENDING_BOOST", "false")!.toLowerCase();
   const engageTrendingBoost =
     trendingBoostRaw === "true" || trendingBoostRaw === "1" || trendingBoostRaw === "yes";
@@ -1047,6 +1058,7 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     operatorPrefix,
     dmContextMessages,
     engageUseRising,
+    engageForYou,
     engageTrendingBoost,
     engageTrendingRefreshMs,
     adaptivePollEnabled,

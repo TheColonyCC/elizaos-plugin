@@ -99,6 +99,7 @@ describe("loadColonyConfig", () => {
       operatorPrefix: "!",
       dmContextMessages: 0,
       engageUseRising: false,
+      engageForYou: false,
       engageTrendingBoost: false,
       engageTrendingRefreshMs: 15 * 60_000,
       adaptivePollEnabled: false,

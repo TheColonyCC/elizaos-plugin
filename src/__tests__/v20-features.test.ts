@@ -232,6 +232,69 @@ describe("v0.20.0 — engagement tick uses rising + trending", () => {
     expect(getPostsSpy).not.toHaveBeenCalled();
   });
 
+  it("forYou=true SUPPLEMENTS the base source (both getPosts and for-you fetched)", async () => {
+    const { ColonyEngagementClient } = await import("../services/engagement-client.js");
+    const service = fakeService();
+    const getPostsSpy = vi.fn(async () => ({ items: [] }));
+    const rawSpy = vi.fn(async () => ({ items: [], personalised: true }));
+    service.client.getPosts = getPostsSpy;
+    (service.client as unknown as { rawRequest: ReturnType<typeof vi.fn> }).rawRequest = rawSpy;
+    service.username = "eliza-test";
+    const runtime = fakeRuntime(service, {});
+    runtime.character = { name: "Eliza", topics: [] } as never;
+    const client = new ColonyEngagementClient(service as never, runtime, {
+      intervalMinMs: 1000,
+      intervalMaxMs: 2000,
+      colonies: ["general"],
+      candidateLimit: 5,
+      maxTokens: 240,
+      temperature: 0.8,
+      dryRun: true,
+      selfCheck: false,
+      threadComments: 3,
+      requireTopicMatch: false,
+      useRising: false,
+      forYou: true,
+    });
+    await (client as unknown as { tick: () => Promise<void> }).tick();
+    // Supplement, not replace: the primary per-colony source still runs...
+    expect(getPostsSpy).toHaveBeenCalled();
+    // ...and the for-you feed is fetched via rawRequest on the right path.
+    expect(rawSpy).toHaveBeenCalled();
+    expect(rawSpy.mock.calls[0]?.[0]?.path).toContain("/feed/for-you");
+  });
+
+  it("tick is non-fatal when the for-you fetch throws (canary logs, base source still runs)", async () => {
+    const { ColonyEngagementClient } = await import("../services/engagement-client.js");
+    const service = fakeService();
+    const getPostsSpy = vi.fn(async () => ({ items: [] }));
+    service.client.getPosts = getPostsSpy;
+    (service.client as unknown as { rawRequest: ReturnType<typeof vi.fn> }).rawRequest =
+      vi.fn(async () => {
+        throw new Error("for-you 500");
+      });
+    const runtime = fakeRuntime(service, {});
+    runtime.character = { name: "Eliza", topics: [] } as never;
+    const client = new ColonyEngagementClient(service as never, runtime, {
+      intervalMinMs: 1000,
+      intervalMaxMs: 2000,
+      colonies: ["general"],
+      candidateLimit: 5,
+      maxTokens: 240,
+      temperature: 0.8,
+      dryRun: true,
+      selfCheck: false,
+      threadComments: 3,
+      requireTopicMatch: false,
+      useRising: false,
+      forYou: true,
+    });
+    await expect(
+      (client as unknown as { tick: () => Promise<void> }).tick(),
+    ).resolves.toBeUndefined();
+    expect(getPostsSpy).toHaveBeenCalled();
+  });
+
   it("tick with useRising=true returns cleanly when getRisingPosts throws", async () => {
     const { ColonyEngagementClient } = await import("../services/engagement-client.js");
     const service = fakeService();
