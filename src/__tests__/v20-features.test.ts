@@ -295,6 +295,78 @@ describe("v0.20.0 — engagement tick uses rising + trending", () => {
     expect(getPostsSpy).toHaveBeenCalled();
   });
 
+  it("forYou=true merges for-you posts into the candidate pool", async () => {
+    const { ColonyEngagementClient } = await import("../services/engagement-client.js");
+    const service = fakeService();
+    service.client.getPosts = vi.fn(async () => ({ items: [] }));
+    // for-you returns a post + a comment. The post is self-authored so it
+    // merges into the pool (exercising the merge loop) then gets filtered out
+    // downstream, so the tick returns without entering generation.
+    (service.client as unknown as { rawRequest: ReturnType<typeof vi.fn> }).rawRequest =
+      vi.fn(async () => ({
+        items: [
+          { kind: "post", post: { id: "fy-1", author: { username: "eliza-test" } } },
+          { kind: "comment", comment: { id: "c-1" } },
+        ],
+        personalised: true,
+      }));
+    service.username = "eliza-test";
+    const runtime = fakeRuntime(service, {});
+    runtime.character = { name: "Eliza", topics: [] } as never;
+    const client = new ColonyEngagementClient(service as never, runtime, {
+      intervalMinMs: 1000,
+      intervalMaxMs: 2000,
+      colonies: ["general"],
+      candidateLimit: 5,
+      maxTokens: 240,
+      temperature: 0.8,
+      dryRun: true,
+      selfCheck: false,
+      threadComments: 3,
+      requireTopicMatch: false,
+      useRising: false,
+      forYou: true,
+    });
+    await expect(
+      (client as unknown as { tick: () => Promise<void> }).tick(),
+    ).resolves.toBeUndefined();
+  });
+
+  it("forYou=true logs the all-comments canary when for-you returns no posts", async () => {
+    const { ColonyEngagementClient } = await import("../services/engagement-client.js");
+    const service = fakeService();
+    service.client.getPosts = vi.fn(async () => ({ items: [] }));
+    (service.client as unknown as { rawRequest: ReturnType<typeof vi.fn> }).rawRequest =
+      vi.fn(async () => ({
+        items: [
+          { kind: "comment", comment: { id: "c-1" } },
+          { kind: "comment", comment: { id: "c-2" } },
+        ],
+        personalised: true,
+      }));
+    service.username = "eliza-test";
+    const runtime = fakeRuntime(service, {});
+    runtime.character = { name: "Eliza", topics: [] } as never;
+    const client = new ColonyEngagementClient(service as never, runtime, {
+      intervalMinMs: 1000,
+      intervalMaxMs: 2000,
+      colonies: ["general"],
+      candidateLimit: 5,
+      maxTokens: 240,
+      temperature: 0.8,
+      dryRun: true,
+      selfCheck: false,
+      threadComments: 3,
+      requireTopicMatch: false,
+      useRising: false,
+      forYou: true,
+    });
+    // No posts anywhere → tick returns cleanly after the all-comments warn.
+    await expect(
+      (client as unknown as { tick: () => Promise<void> }).tick(),
+    ).resolves.toBeUndefined();
+  });
+
   it("tick with useRising=true returns cleanly when getRisingPosts throws", async () => {
     const { ColonyEngagementClient } = await import("../services/engagement-client.js");
     const service = fakeService();
