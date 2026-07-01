@@ -134,6 +134,12 @@ export interface ColonyEngagementClientConfig {
   threadCompression?: "verbatim" | "abridged";
   /** v0.20.0: source candidates from the trending/rising feed instead of per-colony `new`. */
   useRising?: boolean;
+  /**
+   * v0.35.0: additionally pull the personalised for-you feed and MERGE its
+   * posts into the candidate pool (never replaces the primary source). Also
+   * acts as a live canary on GET /feed/for-you. Off by default.
+   */
+  forYou?: boolean;
   /** v0.20.0: reorder eligible candidates by overlap with currently-trending tags. */
   trendingBoost?: boolean;
   /** v0.20.0: refresh interval (ms) for the cached trending-tag set. Default 15min. */
@@ -398,6 +404,71 @@ export class ColonyEngagementClient {
           `COLONY_ENGAGEMENT_CLIENT: getPosts(${colony}) failed: ${String(err)}`,
         );
         return;
+      }
+    }
+    // v0.35.0: supplement the primary candidate source with the personalised
+    // for-you feed (COLONY_ENGAGE_FOR_YOU). Strictly additive — for-you posts
+    // are MERGED into whatever the per-colony/rising source produced, never
+    // replacing it. Doubles as a live canary on GET /feed/for-you: anomalies
+    // (fetch error, empty feed, all-comments) are logged at warn so a dogfood
+    // agent surfaces endpoint regressions automatically. Called via rawRequest
+    // so it works without bumping the SDK dependency.
+    if (this.config.forYou) {
+      try {
+        const fy = await (this.service.client as unknown as {
+          rawRequest: (o: { method: string; path: string }) => Promise<{
+            items?: Array<{
+              kind?: string;
+              post?: PostLike & { author?: { username?: string } };
+            }>;
+            personalised?: boolean;
+          }>;
+        }).rawRequest({
+          method: "GET",
+          path: `/feed/for-you?limit=${this.config.candidateLimit}`,
+        });
+        const fyItems = fy.items ?? [];
+        const fyPosts = fyItems
+          .filter((i) => i.kind === "post" && i.post)
+          .map((i) => i.post!);
+        const fyComments = fyItems.length - fyPosts.length;
+        if (!fyItems.length) {
+          logger.warn("COLONY_ENGAGEMENT_CLIENT: for-you canary — 0 items returned");
+        } else if (!fyPosts.length) {
+          logger.warn(
+            `COLONY_ENGAGEMENT_CLIENT: for-you canary — all-comments (${fyComments} items, 0 posts)`,
+          );
+        } else {
+          logger.debug(
+            `COLONY_ENGAGEMENT_CLIENT: for-you supplement — ${fyPosts.length} posts / ${fyComments} comments, personalised=${String(fy.personalised ?? "?")}`,
+          );
+        }
+        // Merge: dedup by id vs the primary pool, cap per author (the feed can
+        // over-cluster — a few authors otherwise dominate) for diversity.
+        const have = new Set(posts.map((p) => p.id));
+        const perAuthor = new Map<string, number>();
+        let merged = 0;
+        for (const p of fyPosts) {
+          if (!p.id || have.has(p.id)) continue;
+          const author = p.author?.username ?? "";
+          const n = perAuthor.get(author) ?? 0;
+          if (n >= 2) continue;
+          perAuthor.set(author, n + 1);
+          have.add(p.id);
+          posts.push(p);
+          merged++;
+        }
+        if (merged) {
+          logger.debug(
+            `COLONY_ENGAGEMENT_CLIENT: for-you merged ${merged} supplemental candidate(s)`,
+          );
+        }
+      } catch (err) {
+        // Non-fatal: primary discovery already populated `posts`. The warn is
+        // the canary — a for-you outage/regression shows up here.
+        logger.warn(
+          `COLONY_ENGAGEMENT_CLIENT: for-you canary — fetch failed: ${String(err)}`,
+        );
       }
     }
     const sourceLabel = this.config.useRising ? "rising" : `c/${colony}`;

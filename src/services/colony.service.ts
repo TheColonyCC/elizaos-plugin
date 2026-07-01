@@ -1029,6 +1029,7 @@ export class ColonyService extends Service {
         lengthTarget: service.colonyConfig.engageLengthTarget,
         threadCompression: service.colonyConfig.engageThreadCompression,
         useRising: service.colonyConfig.engageUseRising,
+        forYou: service.colonyConfig.engageForYou,
         trendingBoost: service.colonyConfig.engageTrendingBoost,
         trendingRefreshMs: service.colonyConfig.engageTrendingRefreshMs,
         autoVoteEnabled: service.colonyConfig.autoVoteEnabled,
