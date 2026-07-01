@@ -140,6 +140,15 @@ export interface ColonyEngagementClientConfig {
    * acts as a live canary on GET /feed/for-you. Off by default.
    */
   forYou?: boolean;
+  /**
+   * v0.36.0: auto-follow the author of any content the auto-vote pass
+   * up-votes (a demonstrated high-quality interaction). Builds the follow
+   * graph — and thus the for-you feed's signal — from who the agent actually
+   * engages with well. Requires `autoVoteEnabled`. Off by default.
+   */
+  autoFollow?: boolean;
+  /** v0.36.0: max new auto-follows per engagement tick. Default 2. */
+  autoFollowMaxPerTick?: number;
   /** v0.20.0: reorder eligible candidates by overlap with currently-trending tags. */
   trendingBoost?: boolean;
   /** v0.20.0: refresh interval (ms) for the cached trending-tag set. Default 15min. */
@@ -232,6 +241,12 @@ export class ColonyEngagementClient {
    */
   private trendingTags: Set<string> | null = null;
   private trendingTagsFetchedTs = 0;
+  /**
+   * v0.36.0: author ids we've auto-followed this session (COLONY_AUTO_FOLLOW).
+   * Session-lived dedup so we don't re-hit the follow endpoint every tick for
+   * the same author; a persistent 409 (already following) is benign anyway.
+   */
+  private readonly autoFollowed = new Set<string>();
 
   constructor(
     private readonly service: ColonyService,
@@ -1049,6 +1064,7 @@ export class ColonyEngagementClient {
       { includeComments: this.config.autoVoteIncludeComments ?? true },
     );
 
+    let autoFollowedThisTick = 0;
     for (const o of outcomes) {
       if (!o.voted) continue;
       logger.info(
@@ -1080,6 +1096,40 @@ export class ColonyEngagementClient {
         },
         { modelType: this.config.scorerModelType },
       );
+      // v0.36.0: auto-follow the author of anything we up-voted. An auto-upvote
+      // is the agent's own high-quality signal, so following the author grows
+      // the follow graph — and the for-you feed — from demonstrated-good
+      // interactions. Capped per tick, self-excluded, session-deduped, and
+      // tolerant of "already following" (409). Non-fatal.
+      if (
+        this.config.autoFollow &&
+        o.action === "upvote" &&
+        autoFollowedThisTick < (this.config.autoFollowMaxPerTick ?? 2)
+      ) {
+        const authorObj =
+          o.kind === "post"
+            ? candidate.author
+            : threadComments.find((c) => c.id === o.id)?.author;
+        const authorId = (authorObj as { id?: string } | undefined)?.id;
+        const selfUsername = (this.service as unknown as { username?: string }).username;
+        if (authorId && author && author !== selfUsername && !this.autoFollowed.has(authorId)) {
+          this.autoFollowed.add(authorId);
+          try {
+            await (this.service.client as unknown as {
+              follow: (id: string) => Promise<unknown>;
+            }).follow(authorId);
+            autoFollowedThisTick++;
+            logger.info(
+              `🌐 COLONY_ENGAGEMENT_CLIENT: auto-followed @${author} (${o.score} ${o.kind})`,
+            );
+          } catch (err) {
+            // 409 = already following (benign); anything else logged, non-fatal.
+            logger.debug(
+              `COLONY_ENGAGEMENT_CLIENT: auto-follow @${author} skipped: ${String(err)}`,
+            );
+          }
+        }
+      }
     }
 
     return { shouldEngage };

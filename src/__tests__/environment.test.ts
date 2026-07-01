@@ -100,6 +100,8 @@ describe("loadColonyConfig", () => {
       dmContextMessages: 0,
       engageUseRising: false,
       engageForYou: false,
+      engageAutoFollow: false,
+      engageAutoFollowMaxPerTick: 2,
       engageTrendingBoost: false,
       engageTrendingRefreshMs: 15 * 60_000,
       adaptivePollEnabled: false,
@@ -149,6 +151,25 @@ describe("loadColonyConfig", () => {
     expect(cfg.diversityThreshold).toBe(0.8);
     expect(cfg.diversityNgram).toBe(3);
     expect(cfg.diversityCooldownMs).toBe(60 * 60_000);
+  });
+
+  it("v0.36.0 — parses auto-follow settings and falls back on garbage cap", () => {
+    const on = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_AUTO_FOLLOW_ENABLED: "true",
+      COLONY_AUTO_FOLLOW_MAX_PER_TICK: "5",
+    });
+    const cfgOn = loadColonyConfig(on);
+    expect(cfgOn.engageAutoFollow).toBe(true);
+    expect(cfgOn.engageAutoFollowMaxPerTick).toBe(5);
+
+    const garbage = fakeRuntime(null, {
+      COLONY_API_KEY: "col_abc",
+      COLONY_AUTO_FOLLOW_MAX_PER_TICK: "lots",
+    });
+    const cfgGarbage = loadColonyConfig(garbage);
+    expect(cfgGarbage.engageAutoFollow).toBe(false);
+    expect(cfgGarbage.engageAutoFollowMaxPerTick).toBe(2);
   });
 
   it("v0.19.0 — parses operator kill-switch and DM context settings", () => {
