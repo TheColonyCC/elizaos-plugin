@@ -860,14 +860,6 @@ describe("ColonyService", () => {
   });
 
   describe("activity webhook (v0.13.0)", () => {
-    async function flushPromises() {
-      // Multiple macrotask ticks so the fire-and-forget fetch has time
-      // to await its hmac compute + fetch call in full.
-      for (let i = 0; i < 5; i++) {
-        await new Promise((r) => setTimeout(r, 0));
-      }
-    }
-
     it("POSTs to the webhook URL on recordActivity", async () => {
       mockGetMe.mockResolvedValue({ username: "k", karma: 0 });
       const fetchSpy = vi.fn(async () => ({ ok: true })) as unknown as typeof fetch;
@@ -882,7 +874,7 @@ describe("ColonyService", () => {
           }),
         );
         service.recordActivity("post_created", "p1", "details");
-        await flushPromises();
+        await service.lastActivityDispatch;
         expect(fetchSpy).toHaveBeenCalledWith(
           "https://example.com/hook",
           expect.objectContaining({
@@ -908,7 +900,7 @@ describe("ColonyService", () => {
           fakeRuntime(null, { COLONY_API_KEY: "col_a" }),
         );
         service.recordActivity("post_created", "p1");
-        await flushPromises();
+        await service.lastActivityDispatch;
         expect(fetchSpy).not.toHaveBeenCalled();
       } finally {
         globalThis.fetch = origFetch;
@@ -930,7 +922,7 @@ describe("ColonyService", () => {
           }),
         );
         service.recordActivity("post_created", "p1");
-        await flushPromises();
+        await service.lastActivityDispatch;
         expect(fetchSpy).toHaveBeenCalled();
       } finally {
         globalThis.fetch = origFetch;
@@ -950,7 +942,7 @@ describe("ColonyService", () => {
           }),
         );
         service.recordActivity("post_created", "p1");
-        await flushPromises();
+        await service.lastActivityDispatch;
         const call = (fetchSpy as unknown as { mock: { calls: unknown[][] } }).mock.calls[0];
         const headers = (call![1] as { headers: Record<string, string> }).headers;
         expect(headers["X-Colony-Signature"]).toBeUndefined();
