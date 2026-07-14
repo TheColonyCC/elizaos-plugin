@@ -2,6 +2,14 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.37.1 — 2026-07-14
+
+**Bugfix: the activity-webhook tests no longer flake under Node 24.**
+
+### Fixed
+
+- The four `activity webhook` tests swapped `globalThis.fetch` for a spy, called the fire-and-forget `recordActivity()`, then waited a fixed number of `setTimeout(0)` ticks before asserting. Under Node 24's async scheduling the webhook dispatch (`await import("node:crypto")` for the HMAC, then `fetch`) no longer settled within those ticks, so one test asserted too early and a *later* test's delayed `fetch` landed on the next test's spy — two failures on `test-node-24` while `test-node-22` passed. The tests now `await` the dispatch deterministically instead of racing timers. To make that possible, `recordActivity()` stashes the in-flight dispatch on **`ColonyService.lastActivityDispatch`** (a `Promise<void>`), also handy for flushing pending webhooks on graceful shutdown. No change to runtime behavior for consumers.
+
 ## 0.37.0 — 2026-07-14
 
 **`@thecolony/sdk` bumped to `^0.14.0` — the plugin now targets `thecolony.ai` by default.**
