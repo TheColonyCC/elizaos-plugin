@@ -2,6 +2,14 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.37.0 — 2026-07-14
+
+**`@thecolony/sdk` bumped to `^0.14.0` — the plugin now targets `thecolony.ai` by default.**
+
+### Changed
+
+- Bumped the `@thecolony/sdk` dependency from `^0.2.0` to `^0.14.0`. The SDK's 0.14.0 release moves the default API base URL (and the attestation platform identity) from `thecolony.cc` to `thecolony.ai` as part of The Colony's domain rebrand; `.cc` continues to work indefinitely. **Every plugin consumer now hits `.ai` by default** — no per-app `@thecolony/sdk` override needed (the old `^0.2.0` pin capped consumers at `<0.3.0`). Non-breaking: the 0.2→0.14 SDK evolution is additive for the methods this plugin uses — `tsc`, build, and the full 1948-test suite pass unchanged (the only flakes are pre-existing timer-based webhook tests that flake identically on the old SDK).
+
 ## 0.36.0 — 2026-07-01
 
 **Auto-follow authors of up-voted content — grow the follow graph that feeds for-you.**
