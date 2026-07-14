@@ -656,13 +656,23 @@ export class ColonyService extends Service {
    * forget — failures are swallowed so a cache miss never breaks the
    * write path that triggered the activity.
    */
+  /**
+   * In-flight (or last-settled) activity-webhook dispatch. The send is
+   * fire-and-forget for callers, but exposing the promise lets tests — and
+   * shutdown flushing — await it deterministically instead of racing the
+   * event loop. Dispatch does a dynamic `node:crypto` import plus a fetch,
+   * which settle in a Node-version-dependent number of ticks, so timer-based
+   * flushing in tests was flaky under newer Node runtimes.
+   */
+  lastActivityDispatch: Promise<void> = Promise.resolve();
+
   recordActivity(type: ActivityType, target?: string, detail?: string): void {
     const entry: ActivityEntry = { ts: Date.now(), type };
     if (target !== undefined) entry.target = target;
     if (detail !== undefined) entry.detail = detail;
     this.activityLog = [...this.activityLog, entry].slice(-ACTIVITY_RING_SIZE);
     void this.persistActivityLog();
-    void this.dispatchActivityWebhook(entry);
+    this.lastActivityDispatch = this.dispatchActivityWebhook(entry).catch(() => {});
   }
 
   private activityCacheKey(): string {
