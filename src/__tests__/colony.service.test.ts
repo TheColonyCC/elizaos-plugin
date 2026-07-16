@@ -19,7 +19,7 @@ vi.mock("@thecolony/sdk", () => ({
   ColonyClient: ColonyClientCtor,
 }));
 
-import { ColonyService } from "../services/colony.service.js";
+import { ColonyService, parseCognitionAnswer } from "../services/colony.service.js";
 
 describe("ColonyService", () => {
   beforeEach(() => {
@@ -950,5 +950,143 @@ describe("ColonyService", () => {
         globalThis.fetch = origFetch;
       }
     });
+  });
+});
+
+describe("ColonyService cognition (v0.38.0)", () => {
+  const fullClient = (over: Record<string, unknown> = {}) => ({
+    getMe: vi.fn(async () => ({ username: "t", karma: 0 })),
+    getNotifications: vi.fn(async () => []),
+    markNotificationRead: vi.fn(async () => undefined),
+    createPost: vi.fn(async () => ({ id: "p1" })),
+    createComment: vi.fn(async () => ({ id: "c1" })),
+    answerPostCognition: vi.fn(async () => ({ status: "proved" })),
+    answerCognition: vi.fn(async () => ({ status: "proved" })),
+    ...over,
+  });
+
+  async function startWith(
+    client: Record<string, unknown>,
+    settings: Record<string, string> = {},
+    useModelImpl: (...a: unknown[]) => Promise<unknown> = async () => "170",
+  ) {
+    ColonyClientCtor.mockImplementationOnce(() => client);
+    const rt = fakeRuntime(null, { COLONY_API_KEY: "col_c", ...settings }) as unknown as {
+      useModel: ReturnType<typeof vi.fn>;
+    };
+    rt.useModel = vi.fn(useModelImpl);
+    const service = await ColonyService.start(rt as never);
+    return { service, rt };
+  }
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it("parseCognitionAnswer takes the last integer, else null", () => {
+    expect(parseCognitionAnswer("170")).toBe("170");
+    expect(parseCognitionAnswer("8 x 14 = 112")).toBe("112");
+    expect(parseCognitionAnswer("no idea")).toBeNull();
+  });
+
+  it("solves and answers a challenged comment", async () => {
+    const answerCognition = vi.fn(async () => ({ status: "proved" }));
+    const client = fullClient({
+      createComment: vi.fn(async () => ({
+        id: "c1",
+        cognition: { token: "tok", prompt: "each pool holds seventeen; ten pools?" },
+      })),
+      answerCognition,
+    });
+    const { service, rt } = await startWith(client);
+    await (service.client as unknown as { createComment: (...a: unknown[]) => Promise<unknown> }).createComment("p1", "hi");
+    await flush();
+    expect(rt.useModel).toHaveBeenCalled();
+    expect(answerCognition).toHaveBeenCalledWith("c1", "tok", "170");
+  });
+
+  it("solves and answers a challenged post", async () => {
+    const answerPostCognition = vi.fn(async () => ({ status: "proved" }));
+    const client = fullClient({
+      createPost: vi.fn(async () => ({ id: "p1", cognition: { token: "tk", prompt: "x" } })),
+      answerPostCognition,
+    });
+    const { service } = await startWith(client);
+    await (service.client as unknown as { createPost: (...a: unknown[]) => Promise<unknown> }).createPost("t", "b", {});
+    await flush();
+    expect(answerPostCognition).toHaveBeenCalledWith("p1", "tk", "170");
+  });
+
+  it("does nothing when a create carries no cognition block", async () => {
+    const answerCognition = vi.fn();
+    const client = fullClient({ createComment: vi.fn(async () => ({ id: "c1" })), answerCognition });
+    const { service } = await startWith(client);
+    await (service.client as unknown as { createComment: (...a: unknown[]) => Promise<unknown> }).createComment("p1", "hi");
+    await flush();
+    expect(answerCognition).not.toHaveBeenCalled();
+  });
+
+  it("warns and skips a challenge with no id", async () => {
+    const answerCognition = vi.fn();
+    const client = fullClient({
+      createComment: vi.fn(async () => ({ cognition: { token: "t", prompt: "p" } })),
+      answerCognition,
+    });
+    const { service } = await startWith(client);
+    await (service.client as unknown as { createComment: (...a: unknown[]) => Promise<unknown> }).createComment("p1", "hi");
+    await flush();
+    expect(answerCognition).not.toHaveBeenCalled();
+  });
+
+  it("warns and skips when the model gives no numeric answer", async () => {
+    const answerCognition = vi.fn();
+    const client = fullClient({
+      createComment: vi.fn(async () => ({ id: "c1", cognition: { token: "t", prompt: "p" } })),
+      answerCognition,
+    });
+    const { service } = await startWith(client, {}, async () => "I don't know");
+    await (service.client as unknown as { createComment: (...a: unknown[]) => Promise<unknown> }).createComment("p1", "hi");
+    await flush();
+    expect(answerCognition).not.toHaveBeenCalled();
+  });
+
+  it("logs not-proved when the answer is rejected", async () => {
+    const answerCognition = vi.fn(async () => ({ status: "failed" }));
+    const client = fullClient({
+      createComment: vi.fn(async () => ({ id: "c1", cognition: { token: "t", prompt: "p" } })),
+      answerCognition,
+    });
+    const { service } = await startWith(client);
+    await (service.client as unknown as { createComment: (...a: unknown[]) => Promise<unknown> }).createComment("p1", "hi");
+    await flush();
+    expect(answerCognition).toHaveBeenCalled();
+  });
+
+  it("swallows handler errors so the create still returns", async () => {
+    const client = fullClient({
+      createComment: vi.fn(async () => ({ id: "c1", cognition: { token: "t", prompt: "p" } })),
+    });
+    const { service } = await startWith(client, {}, async () => {
+      throw new Error("model down");
+    });
+    const res = await (service.client as unknown as { createComment: (...a: unknown[]) => Promise<{ id: string }> }).createComment("p1", "hi");
+    await flush();
+    expect(res.id).toBe("c1");
+  });
+
+  it("does not wrap when cognition is disabled", async () => {
+    const answerCognition = vi.fn();
+    const client = fullClient({
+      createComment: vi.fn(async () => ({ id: "c1", cognition: { token: "t", prompt: "p" } })),
+      answerCognition,
+    });
+    const { service } = await startWith(client, { COLONY_COGNITION_ENABLED: "false" });
+    await (service.client as unknown as { createComment: (...a: unknown[]) => Promise<unknown> }).createComment("p1", "hi");
+    await flush();
+    expect(answerCognition).not.toHaveBeenCalled();
+  });
+
+  it("install is idempotent on the same client", async () => {
+    const client = fullClient();
+    const { service } = await startWith(client);
+    (service as unknown as { installCognitionHandler(): void }).installCognitionHandler();
+    expect((service.client as unknown as { __cognitionWrapped?: boolean }).__cognitionWrapped).toBe(true);
   });
 });

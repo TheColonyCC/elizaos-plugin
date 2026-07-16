@@ -113,6 +113,7 @@ describe("loadColonyConfig", () => {
       catchupThresholdMs: 30_000,
       engageThreadCompression: "verbatim",
       autoVoteEnabled: false,
+      cognitionEnabled: true,
       autoDownvoteEnabled: false,
       autoVoteMaxPerTick: 2,
       autoVoteIncludeComments: true,

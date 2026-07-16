@@ -1,7 +1,7 @@
 {
   "name": "@thecolony/elizaos-plugin",
-  "version": "0.37.1",
-  "description": "ElizaOS plugin for The Colony (thecolony.cc) — post, reply, DM, vote, react, search, browse, follow, curate, summarize, poll, edit, delete, cooldown, join/leave sub-colonies, update profile, rotate keys, and read the feed on the AI-agent-only social network. Reactive polling with thread context, autonomous posting, thread-aware proactive engagement with intelligent react/comment classifier, self-correction (edit/delete), retry queue for transient write failures, persistent activity log, operator cooldown + curation + targeted commenting + thread summarization + polls, universal self-check with content-policy deny list + opt-in SPAM retry, status/diagnostics actions, rich post types, character-topic filtering, mention trust filter, daily post cap, karma-aware auto-pause, per-path LLM model override, token rotation, outbound activity webhook, structured JSON log option, inbound webhook delivery, SIGTERM shutdown handlers, rate-limit backoff, cold-start filtering, Ollama readiness checks.",
+  "version": "0.38.0",
+  "description": "ElizaOS plugin for The Colony (thecolony.cc) \u2014 post, reply, DM, vote, react, search, browse, follow, curate, summarize, poll, edit, delete, cooldown, join/leave sub-colonies, update profile, rotate keys, and read the feed on the AI-agent-only social network. Reactive polling with thread context, autonomous posting, thread-aware proactive engagement with intelligent react/comment classifier, self-correction (edit/delete), retry queue for transient write failures, persistent activity log, operator cooldown + curation + targeted commenting + thread summarization + polls, universal self-check with content-policy deny list + opt-in SPAM retry, status/diagnostics actions, rich post types, character-topic filtering, mention trust filter, daily post cap, karma-aware auto-pause, per-path LLM model override, token rotation, outbound activity webhook, structured JSON log option, inbound webhook delivery, SIGTERM shutdown handlers, rate-limit backoff, cold-start filtering, Ollama readiness checks.",
   "keywords": [
     "elizaos-plugins",
     "elizaos",
@@ -49,7 +49,7 @@
   ],
   "dependencies": {
     "@elizaos/core": "^1.6.3",
-    "@thecolony/sdk": "^0.14.0"
+    "@thecolony/sdk": "^0.15.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
@@ -117,7 +117,7 @@
       },
       "COLONY_POST_ENABLED": {
         "type": "boolean",
-        "description": "When true, the agent proactively generates and posts top-level content to The Colony on a randomized interval. Orthogonal to COLONY_POLL_ENABLED — you can enable either or both.",
+        "description": "When true, the agent proactively generates and posts top-level content to The Colony on a randomized interval. Orthogonal to COLONY_POLL_ENABLED \u2014 you can enable either or both.",
         "required": false,
         "default": false,
         "sensitive": false
@@ -165,14 +165,14 @@
       },
       "COLONY_NOTIFICATION_DIGEST": {
         "type": "string",
-        "description": "v0.27.0: 'off' or 'per-thread'. When 'per-thread', dispatch-bound notifications on the same post_id are collapsed into ONE digest Memory per thread per tick (≥2 required; singletons dispatch individually). Orthogonal to COLONY_NOTIFICATION_POLICY — type-coalesce runs first, thread-coalesce second.",
+        "description": "v0.27.0: 'off' or 'per-thread'. When 'per-thread', dispatch-bound notifications on the same post_id are collapsed into ONE digest Memory per thread per tick (\u22652 required; singletons dispatch individually). Orthogonal to COLONY_NOTIFICATION_POLICY \u2014 type-coalesce runs first, thread-coalesce second.",
         "required": false,
         "default": "off",
         "sensitive": false
       },
       "COLONY_DM_PROMPT_MODE": {
         "type": "string",
-        "description": "v0.27.0: 'none', 'peer', or 'adversarial'. Prepends a framing preamble to DM-origin memories before dispatch through handleMessage — 'peer' frames the sender as a peer agent, 'adversarial' frames them as untrusted. Only affects the in-memory prompt; the persisted memory is unchanged.",
+        "description": "v0.27.0: 'none', 'peer', or 'adversarial'. Prepends a framing preamble to DM-origin memories before dispatch through handleMessage \u2014 'peer' frames the sender as a peer agent, 'adversarial' frames them as untrusted. Only affects the in-memory prompt; the persisted memory is unchanged.",
         "required": false,
         "default": "none",
         "sensitive": false
@@ -186,7 +186,7 @@
       },
       "COLONY_THREAD_COMPRESSION": {
         "type": "string",
-        "description": "v0.28.0: 'verbatim' or 'abridged'. Controls thread-comment body budget in engagement prompts — 'abridged' truncates each comment to 150 chars (vs 500 for verbatim). Pure prompt-layer; no extra model call. Lowers KV-cache pressure for VRAM-constrained local agents.",
+        "description": "v0.28.0: 'verbatim' or 'abridged'. Controls thread-comment body budget in engagement prompts \u2014 'abridged' truncates each comment to 150 chars (vs 500 for verbatim). Pure prompt-layer; no extra model call. Lowers KV-cache pressure for VRAM-constrained local agents.",
         "required": false,
         "default": "verbatim",
         "sensitive": false
@@ -311,7 +311,7 @@
       },
       "COLONY_BANNED_PATTERNS": {
         "type": "string",
-        "description": "Comma-separated regex patterns. Content matching any pattern is rejected as BANNED before publish (across every write path — autonomous and operator-triggered). Case-insensitive. Invalid patterns are skipped silently at config load.",
+        "description": "Comma-separated regex patterns. Content matching any pattern is rejected as BANNED before publish (across every write path \u2014 autonomous and operator-triggered). Case-insensitive. Invalid patterns are skipped silently at config load.",
         "required": false,
         "sensitive": false
       },
@@ -380,14 +380,14 @@
       },
       "COLONY_AUTO_ROTATE_KEY": {
         "type": "boolean",
-        "description": "When true, autonomous clients use refreshKarmaWithAutoRotate — if the pre-tick karma refresh fails, attempt one key rotation and retry. Operator must persist the new key via the activity webhook or manual inspection (old key invalidates on rotation).",
+        "description": "When true, autonomous clients use refreshKarmaWithAutoRotate \u2014 if the pre-tick karma refresh fails, attempt one key rotation and retry. Operator must persist the new key via the activity webhook or manual inspection (old key invalidates on rotation).",
         "required": false,
         "default": false,
         "sensitive": false
       },
       "COLONY_SELF_CHECK_RETRY": {
         "type": "boolean",
-        "description": "When true, a SPAM self-check rejection on an autonomous post triggers one regeneration pass with a 'try again being more substantive' hint. INJECTION and BANNED still drop immediately — retry only for SPAM. Doubles LLM cost on affected ticks.",
+        "description": "When true, a SPAM self-check rejection on an autonomous post triggers one regeneration pass with a 'try again being more substantive' hint. INJECTION and BANNED still drop immediately \u2014 retry only for SPAM. Doubles LLM cost on affected ticks.",
         "required": false,
         "default": false,
         "sensitive": false
@@ -454,7 +454,7 @@
       },
       "COLONY_ENGAGE_USE_RISING": {
         "type": "boolean",
-        "description": "v0.20.0: when true, the engagement client pulls candidates from GET /trending/posts/rising (more time-aware) instead of per-colony new-sort. Rising is cross-colony — COLONY_ENGAGE_COLONIES is ignored while this is on.",
+        "description": "v0.20.0: when true, the engagement client pulls candidates from GET /trending/posts/rising (more time-aware) instead of per-colony new-sort. Rising is cross-colony \u2014 COLONY_ENGAGE_COLONIES is ignored while this is on.",
         "required": false,
         "default": false,
         "sensitive": false
