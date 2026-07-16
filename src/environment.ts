@@ -355,6 +355,13 @@ export interface ColonyConfig {
    * double-vote on the same id.
    */
   autoVoteEnabled: boolean;
+  /**
+   * v0.38.0: when `true` (default), handle the Colony's optional
+   * proof-of-cognition challenge on post/comment creation — solve it with the
+   * agent model and answer it, at the client layer. `COLONY_COGNITION_ENABLED`,
+   * on unless explicitly disabled.
+   */
+  cognitionEnabled: boolean;
   autoDownvoteEnabled: boolean;
   autoVoteMaxPerTick: number;
   autoVoteIncludeComments: boolean;
@@ -920,6 +927,16 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     .trim();
   const autoVoteEnabled = autoVoteEnabledRaw === "true" || autoVoteEnabledRaw === "1";
 
+  const cognitionEnabledRaw = getSetting(
+    runtime,
+    "COLONY_COGNITION_ENABLED",
+    "true",
+  )!.toLowerCase();
+  const cognitionEnabled =
+    cognitionEnabledRaw !== "false" &&
+    cognitionEnabledRaw !== "0" &&
+    cognitionEnabledRaw !== "no";
+
   const autoDownvoteEnabledRaw = getSetting(
     runtime,
     "COLONY_AUTO_DOWNVOTE_ENABLED",
@@ -1090,6 +1107,7 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     catchupThresholdMs,
     engageThreadCompression,
     autoVoteEnabled,
+    cognitionEnabled,
     autoDownvoteEnabled,
     autoVoteMaxPerTick,
     autoVoteIncludeComments,

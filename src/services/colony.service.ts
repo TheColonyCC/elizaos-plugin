@@ -162,6 +162,23 @@ const ACTIVITY_RING_SIZE = 50;
 const HEALTH_HISTORY_SIZE = 50;
 const ACTIVITY_CACHE_PREFIX = "colony/activity-log";
 
+const COGNITION_SOLVE_SYSTEM =
+  "You are solving a short arithmetic word problem. The text is deliberately " +
+  "obfuscated with random capitalisation and inserted punctuation, and the numbers " +
+  "are written as words (for example 'seventeen', 'ten'). Read it, compute the single " +
+  "whole-number answer, and reply with ONLY that number as digits — no words, no units, " +
+  "no working, nothing else.";
+
+/**
+ * Extract the final integer from a model's cognition-solve output. The
+ * obfuscated prompt carries no digits (operands are number-words), so any
+ * digits in the reply are the model's arithmetic — take the last one.
+ */
+export function parseCognitionAnswer(text: string): string | null {
+  const nums = text.match(/-?\d+/g);
+  return nums && nums.length > 0 ? nums[nums.length - 1] : null;
+}
+
 export class ColonyService extends Service {
   static serviceType = "colony";
 
@@ -770,6 +787,7 @@ export class ColonyService extends Service {
       }
       // Rebuild the client so subsequent calls authenticate with the new key
       this.client = new ColonyClient(newKey);
+      this.installCognitionHandler(); // re-wrap: the fresh client isn't wrapped
       this.colonyConfig = { ...this.colonyConfig, apiKey: newKey };
       this.recordActivity(
         "post_created",
@@ -910,10 +928,95 @@ export class ColonyService extends Service {
     this.signalHandlersRegistered = [];
   }
 
+  /**
+   * Solve a proof-of-cognition prompt with the agent's own model. Returns the
+   * numeric answer as a string, or null if the model produced no number.
+   */
+  private async solveCognition(prompt: string): Promise<string | null> {
+    const raw = String(
+      await this.runtime.useModel(ModelType.TEXT_SMALL, {
+        prompt: `${COGNITION_SOLVE_SYSTEM}\n\nPuzzle: ${prompt}`,
+        temperature: 0,
+        maxTokens: 200,
+      }),
+    );
+    return parseCognitionAnswer(raw);
+  }
+
+  /**
+   * If a create response carries the Colony's optional proof-of-cognition
+   * challenge, solve it with the agent model and answer it. Best-effort —
+   * callers invoke this fire-and-forget so it never blocks or breaks a create.
+   */
+  private async answerCognitionChallenge(
+    kind: "post" | "comment",
+    resp: unknown,
+  ): Promise<void> {
+    const r = resp as {
+      id?: string;
+      cognition?: { token?: string; prompt?: string } | null;
+    };
+    const cog = r?.cognition;
+    if (!cog?.token || !cog.prompt) return; // not challenged — the normal case
+    const id = r.id;
+    if (!id) {
+      logger.warn(`COLONY_COGNITION: ${kind} challenge arrived with no id`);
+      return;
+    }
+    logger.info(
+      `COLONY_COGNITION: ${kind} ${id} was challenged — solving with the agent model`,
+    );
+    const answer = await this.solveCognition(cog.prompt);
+    if (answer === null) {
+      logger.warn(`COLONY_COGNITION: agent model produced no numeric answer for ${kind} ${id}`);
+      return;
+    }
+    const res = (await (kind === "post"
+      ? this.client.answerPostCognition(id, cog.token, answer)
+      : this.client.answerCognition(id, cog.token, answer))) as { status?: string };
+    if (res?.status === "proved") {
+      logger.info(`COLONY_COGNITION: ${kind} ${id} proved (answer=${answer})`);
+    } else {
+      logger.warn(`COLONY_COGNITION: ${kind} ${id} not proved (status=${res?.status})`);
+    }
+  }
+
+  /**
+   * Wrap the client's `createPost` / `createComment` so a cognition challenge
+   * on the response is solved and answered automatically — transparent to the
+   * plugin's create actions (the same plugin-layer pattern as auto-vote).
+   * Idempotent, no-op when disabled; re-run after a key rotation rebuilds the
+   * client.
+   */
+  private installCognitionHandler(): void {
+    if (!this.colonyConfig.cognitionEnabled) return;
+    const client = this.client as unknown as Record<string, unknown> & {
+      __cognitionWrapped?: boolean;
+    };
+    if (client.__cognitionWrapped) return;
+    const wrap = (method: "createPost" | "createComment", kind: "post" | "comment"): void => {
+      const orig = client[method];
+      if (typeof orig !== "function") return;
+      const bound = (orig as (...a: unknown[]) => Promise<unknown>).bind(this.client);
+      client[method] = async (...args: unknown[]): Promise<unknown> => {
+        const created = await bound(...args);
+        void this.answerCognitionChallenge(kind, created).catch((err) =>
+          logger.warn(`COLONY_COGNITION: handler error on ${kind} create: ${String(err)}`),
+        );
+        return created;
+      };
+    };
+    wrap("createPost", "post");
+    wrap("createComment", "comment");
+    client.__cognitionWrapped = true;
+    logger.info("COLONY_COGNITION: challenge handler installed (solve via agent model)");
+  }
+
   static async start(runtime: IAgentRuntime): Promise<ColonyService> {
     const service = new ColonyService(runtime);
     service.colonyConfig = loadColonyConfig(runtime);
     service.client = new ColonyClient(service.colonyConfig.apiKey);
+    service.installCognitionHandler();
 
     try {
       const me = await service.client.getMe();
