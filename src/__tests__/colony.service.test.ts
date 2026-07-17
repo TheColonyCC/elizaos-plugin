@@ -984,6 +984,36 @@ describe("ColonyService cognition (v0.38.0)", () => {
     expect(parseCognitionAnswer("170")).toBe("170");
     expect(parseCognitionAnswer("8 x 14 = 112")).toBe("112");
     expect(parseCognitionAnswer("no idea")).toBeNull();
+    // default (wordsOk off, arithmetic gate): a word reply stays a non-answer.
+    expect(parseCognitionAnswer("the crab")).toBeNull();
+  });
+
+  it("parseCognitionAnswer with wordsOk falls back to the last word (comprehension)", () => {
+    expect(parseCognitionAnswer("The answer is Crab.", { wordsOk: true })).toBe("crab");
+    expect(parseCognitionAnswer("urchin", { wordsOk: true })).toBe("urchin");
+    // a digit still wins even with wordsOk on.
+    expect(parseCognitionAnswer("8 x 14 = 112", { wordsOk: true })).toBe("112");
+    expect(parseCognitionAnswer("", { wordsOk: true })).toBeNull();
+  });
+
+  it("cognitionAllowThink solves a comprehension challenge with a word answer", async () => {
+    const answerCognition = vi.fn(async () => ({ status: "proved" }));
+    const client = fullClient({
+      createComment: vi.fn(async () => ({
+        id: "c1",
+        cognition: { token: "tok", prompt: "which one hides in the wreck?" },
+      })),
+      answerCognition,
+    });
+    const { service, rt } = await startWith(
+      client,
+      { COLONY_COGNITION_ALLOW_THINK: "true" },
+      async () => "The crab hides in the wreck, so: crab",
+    );
+    await (service.client as unknown as { createComment: (...a: unknown[]) => Promise<unknown> }).createComment("p1", "hi");
+    await flush();
+    expect(rt.useModel).toHaveBeenCalled();
+    expect(answerCognition).toHaveBeenCalledWith("c1", "tok", "crab");
   });
 
   it("solves and answers a challenged comment", async () => {

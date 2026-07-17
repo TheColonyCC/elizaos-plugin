@@ -362,6 +362,14 @@ export interface ColonyConfig {
    * on unless explicitly disabled.
    */
   cognitionEnabled: boolean;
+  /**
+   * v0.39.0: when `true`, solve cognition challenges with the model allowed to
+   * reason and to answer with a word (not only an integer) — for the multi-step
+   * and comprehension gate tiers. Default `false` keeps the single-step
+   * arithmetic solve (terse, integer-only). `COLONY_COGNITION_ALLOW_THINK`. See
+   * the cogproof reader-column study for why those tiers are the real gate.
+   */
+  cognitionAllowThink: boolean;
   autoDownvoteEnabled: boolean;
   autoVoteMaxPerTick: number;
   autoVoteIncludeComments: boolean;
@@ -937,6 +945,14 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     cognitionEnabledRaw !== "0" &&
     cognitionEnabledRaw !== "no";
 
+  const cognitionAllowThinkRaw = getSetting(
+    runtime,
+    "COLONY_COGNITION_ALLOW_THINK",
+    "false",
+  )!.toLowerCase();
+  const cognitionAllowThink =
+    cognitionAllowThinkRaw === "true" || cognitionAllowThinkRaw === "1";
+
   const autoDownvoteEnabledRaw = getSetting(
     runtime,
     "COLONY_AUTO_DOWNVOTE_ENABLED",
@@ -1108,6 +1124,7 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     engageThreadCompression,
     autoVoteEnabled,
     cognitionEnabled,
+    cognitionAllowThink,
     autoDownvoteEnabled,
     autoVoteMaxPerTick,
     autoVoteIncludeComments,

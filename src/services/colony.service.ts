@@ -169,14 +169,39 @@ const COGNITION_SOLVE_SYSTEM =
   "whole-number answer, and reply with ONLY that number as digits — no words, no units, " +
   "no working, nothing else.";
 
+// Used when cognitionAllowThink is on (multi-step / comprehension gate tiers):
+// those need the model to reason (compose operations) or to answer with a WORD,
+// not a number. See the cogproof reader-column study for why single-step
+// arithmetic doesn't separate a reader from a scanner but these tiers do.
+const COGNITION_SOLVE_SYSTEM_GENERAL =
+  "You are solving a short puzzle whose text is deliberately obfuscated with random " +
+  "capitalisation and inserted punctuation. It is either an arithmetic word problem " +
+  "(numbers written as words like 'seventeen') or a reading question asking which " +
+  "subject matches a description. Work it out, then reply on the final line with ONLY " +
+  "the answer: a whole number as digits, or a single lowercase word. Nothing else on " +
+  "that final line.";
+
 /**
- * Extract the final integer from a model's cognition-solve output. The
- * obfuscated prompt carries no digits (operands are number-words), so any
- * digits in the reply are the model's arithmetic — take the last one.
+ * Extract the final answer from a model's cognition-solve output.
+ *
+ * The obfuscated prompt carries no digits (operands are number-words), so any
+ * digit in the reply is the model's arithmetic — take the last one. When
+ * `wordsOk` is set (the comprehension gate tier, whose answer is a subject word
+ * like `crab`), fall back to the last alphabetic word, lower-cased. `wordsOk`
+ * defaults `false` so the arithmetic path stays a digit-or-null contract: a
+ * refusal never submits its last word.
  */
-export function parseCognitionAnswer(text: string): string | null {
+export function parseCognitionAnswer(
+  text: string,
+  opts: { wordsOk?: boolean } = {},
+): string | null {
   const nums = text.match(/-?\d+/g);
-  return nums && nums.length > 0 ? nums[nums.length - 1] : null;
+  if (nums && nums.length > 0) return nums[nums.length - 1];
+  if (opts.wordsOk) {
+    const words = text.match(/[A-Za-z]+/g);
+    if (words && words.length > 0) return words[words.length - 1].toLowerCase();
+  }
+  return null;
 }
 
 export class ColonyService extends Service {
@@ -933,14 +958,23 @@ export class ColonyService extends Service {
    * numeric answer as a string, or null if the model produced no number.
    */
   private async solveCognition(prompt: string): Promise<string | null> {
+    // Tier-aware. Default (single-step arithmetic gate): terse integer-only
+    // solve, small budget. When cognitionAllowThink is on (multi-step /
+    // comprehension gate), use a prompt that admits reasoning and a word answer,
+    // and give it more tokens. Note Gemma has no qwen-style `/no_think` switch,
+    // so tier-awareness here is prompt + budget + answer shape, not a soft-switch.
+    const allowThink = this.colonyConfig.cognitionAllowThink;
+    const system = allowThink
+      ? COGNITION_SOLVE_SYSTEM_GENERAL
+      : COGNITION_SOLVE_SYSTEM;
     const raw = String(
       await this.runtime.useModel(ModelType.TEXT_SMALL, {
-        prompt: `${COGNITION_SOLVE_SYSTEM}\n\nPuzzle: ${prompt}`,
+        prompt: `${system}\n\nPuzzle: ${prompt}`,
         temperature: 0,
-        maxTokens: 200,
+        maxTokens: allowThink ? 1024 : 200,
       }),
     );
-    return parseCognitionAnswer(raw);
+    return parseCognitionAnswer(raw, { wordsOk: allowThink });
   }
 
   /**
@@ -968,7 +1002,7 @@ export class ColonyService extends Service {
     );
     const answer = await this.solveCognition(cog.prompt);
     if (answer === null) {
-      logger.warn(`COLONY_COGNITION: agent model produced no numeric answer for ${kind} ${id}`);
+      logger.warn(`COLONY_COGNITION: agent model produced no answer for ${kind} ${id}`);
       return;
     }
     const res = (await (kind === "post"
