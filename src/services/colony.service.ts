@@ -5,6 +5,7 @@ import {
   ModelType,
 } from "@elizaos/core";
 import { ColonyClient } from "@thecolony/sdk";
+import { totpProvider } from "../utils/totp.js";
 import { loadColonyConfig, type ColonyConfig } from "../environment.js";
 import { ColonyInteractionClient } from "./interaction.js";
 import { ColonyPostClient } from "./post-client.js";
@@ -786,7 +787,12 @@ export class ColonyService extends Service {
         return null;
       }
       // Rebuild the client so subsequent calls authenticate with the new key
-      this.client = new ColonyClient(newKey);
+      // Preserve the second factor across a key rotation: the account's 2FA is
+      // unchanged by rotating the API key, so a client rebuilt without the
+      // provider would stop authenticating on the next token exchange.
+      this.client = new ColonyClient(newKey, {
+        totp: totpProvider(this.colonyConfig.totpSecret),
+      });
       this.installCognitionHandler(); // re-wrap: the fresh client isn't wrapped
       this.colonyConfig = { ...this.colonyConfig, apiKey: newKey };
       this.recordActivity(
@@ -1015,7 +1021,13 @@ export class ColonyService extends Service {
   static async start(runtime: IAgentRuntime): Promise<ColonyService> {
     const service = new ColonyService(runtime);
     service.colonyConfig = loadColonyConfig(runtime);
-    service.client = new ColonyClient(service.colonyConfig.apiKey);
+    const totp = totpProvider(service.colonyConfig.totpSecret);
+    if (totp) {
+      logger.info(
+        "COLONY_SERVICE: 2FA configured — supplying a fresh TOTP code per token exchange",
+      );
+    }
+    service.client = new ColonyClient(service.colonyConfig.apiKey, { totp });
     service.installCognitionHandler();
 
     try {

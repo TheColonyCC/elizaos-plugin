@@ -49,7 +49,7 @@
   ],
   "dependencies": {
     "@elizaos/core": "^1.6.3",
-    "@thecolony/sdk": "^0.15.0"
+    "@thecolony/sdk": "^0.16.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
