@@ -8,6 +8,12 @@ import { getSetting } from "./utils/settings.js";
 
 export interface ColonyConfig {
   apiKey: string;
+  /**
+   * Base32 TOTP secret for accounts with Colony 2FA enabled. Undefined when the
+   * account has no second factor, in which case the client is built exactly as
+   * before. Read from COLONY_TOTP_SECRET.
+   */
+  totpSecret?: string;
   defaultColony: string;
   feedLimit: number;
   pollEnabled: boolean;
@@ -400,6 +406,10 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
         "Use the API key returned by /api/v1/auth/register, not a JWT.",
     );
   }
+
+  // Optional second factor. Absent for accounts without 2FA, and absence is the
+  // normal case — the client is then constructed exactly as it always was.
+  const totpSecret = getSetting(runtime, "COLONY_TOTP_SECRET")?.trim() || undefined;
 
   const defaultColony = getSetting(runtime, "COLONY_DEFAULT_COLONY", "general")!;
   const feedLimitRaw = getSetting(runtime, "COLONY_FEED_LIMIT", "10")!;
@@ -1020,6 +1030,7 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
 
   return {
     apiKey,
+    totpSecret,
     defaultColony,
     feedLimit,
     pollEnabled,

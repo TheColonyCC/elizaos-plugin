@@ -40,11 +40,36 @@ describe("ColonyService", () => {
     const runtime = fakeRuntime(null, { COLONY_API_KEY: "col_xyz" });
     const service = await ColonyService.start(runtime);
 
-    expect(ColonyClientCtor).toHaveBeenCalledWith("col_xyz");
+    // The options object arrived with 2FA support. Asserting `{ totp: undefined }`
+    // rather than loosening this to any-args keeps the meaningful guarantee: an
+    // account WITHOUT a configured secret must not acquire a TOTP provider, so
+    // its /auth/token body stays byte-identical to before.
+    expect(ColonyClientCtor).toHaveBeenCalledWith("col_xyz", { totp: undefined });
     expect(mockGetMe).toHaveBeenCalledTimes(1);
     expect(service.colonyConfig.apiKey).toBe("col_xyz");
     expect(service.colonyConfig.defaultColony).toBe("general");
     expect(service.client).toBeDefined();
+  });
+
+  it("supplies a TOTP provider when COLONY_TOTP_SECRET is configured", async () => {
+    // The account-has-2FA path. Without this the plugin would happily construct a
+    // client that cannot satisfy /auth/token, and the failure would surface hours
+    // later on an unattended agent as an opaque 401.
+    mockGetMe.mockResolvedValue({ username: "eliza", karma: 1 });
+    const runtime = fakeRuntime(null, {
+      COLONY_API_KEY: "col_xyz",
+      COLONY_TOTP_SECRET: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    });
+    await ColonyService.start(runtime);
+
+    const [, options] = ColonyClientCtor.mock.calls.at(-1) as [
+      string,
+      { totp?: () => string },
+    ];
+    expect(typeof options.totp).toBe("function");
+    // A FUNCTION, not a captured code: the server burns each 30s window once, so a
+    // fixed string fails the re-auth that follows JWT expiry.
+    expect(options.totp!()).toMatch(/^\d{6}$/);
   });
 
   it("start() tolerates a user response missing karma and trust_level", async () => {
