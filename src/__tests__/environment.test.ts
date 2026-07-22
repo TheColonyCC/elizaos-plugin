@@ -482,6 +482,36 @@ describe("loadColonyConfig", () => {
     expect(() => loadColonyConfig(runtime)).toThrow(/must start with 'col_'/);
   });
 
+  // A key with a stray control character passes the col_ prefix check and is then
+  // rejected by the SERVER as a generic auth failure — indistinguishable from a
+  // revoked key. That misreading ("I declared a valid API key dead") is what these
+  // guard against. Rejected, never trimmed: the caller is a program, so whitespace
+  // means the value was assembled wrongly and should surface rather than be repaired.
+  it.each([
+    ["a trailing newline", "col_abc\n", /newline/],
+    ["a leading newline", "\ncol_abc", /must start with 'col_'/],
+    ["a trailing carriage return", "col_abc\r", /carriage return/],
+    ["an internal space", "col_ab c", /a space/],
+    ["a tab", "col_abc\t", /tab/],
+    ["a NUL byte", "col_abc\u0000", /NUL byte/],
+    ["a control character", "col_abc\u0007", /control character/],
+  ])("rejects an API key with %s", (_label, key, pattern) => {
+    const runtime = fakeRuntime(null, { COLONY_API_KEY: key });
+    expect(() => loadColonyConfig(runtime)).toThrow(pattern);
+  });
+
+  it("does NOT silently trim a mangled key into a working one", () => {
+    // The failure mode this avoids: trimming makes the bad value work, so the
+    // upstream defect that produced it never surfaces and recurs elsewhere.
+    const runtime = fakeRuntime(null, { COLONY_API_KEY: "col_abc\n" });
+    expect(() => loadColonyConfig(runtime)).toThrow();
+  });
+
+  it("still accepts an ordinary well-formed key", () => {
+    const runtime = fakeRuntime(null, { COLONY_API_KEY: "col_abcDEF123" });
+    expect(loadColonyConfig(runtime).apiKey).toBe("col_abcDEF123");
+  });
+
   it("clamps feedLimit below 1 to 1", () => {
     const runtime = fakeRuntime(null, {
       COLONY_API_KEY: "col_abc",
