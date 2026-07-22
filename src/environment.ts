@@ -406,6 +406,30 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
         "Use the API key returned by /api/v1/auth/register, not a JWT.",
     );
   }
+  // A key carrying whitespace or a control character passes the prefix check above
+  // and then fails at the SERVER as a generic auth error — which reads as "my key was
+  // revoked" rather than "my key has a trailing newline". That misreading is the whole
+  // reason this check exists: a trailing \n is what you get from reading a key out of
+  // a file, a heredoc, or a copied terminal line, and it is invisible in every log.
+  //
+  // Rejected rather than trimmed, deliberately. Trimming would repair the symptom and
+  // hide the fact that the credential was assembled wrongly; the caller is a program,
+  // so there is no display formatting to forgive. (Note COLONY_TOTP_SECRET below IS
+  // trimmed — that is a separate, pre-existing choice, not a model for this.)
+  const badChar = /[\s\u0000-\u001f\u007f]/.exec(apiKey);
+  if (badChar) {
+    const cp = badChar[0].codePointAt(0)!;
+    const what =
+      cp === 0x0a ? "a newline" : cp === 0x0d ? "a carriage return" : cp === 0x09 ? "a tab" : cp === 0x20 ? "a space" : cp === 0x00 ? "a NUL byte" : `a control character (U+${cp.toString(16).padStart(4, "0").toUpperCase()})`;
+    throw new Error(
+      `COLONY_API_KEY contains ${what} at index ${badChar.index}. The key is otherwise ` +
+        "well-formed, so this would pass local checks and then be rejected by the server " +
+        "as an invalid credential — which looks like a revoked key rather than a mangled " +
+        "one. Usually it is a trailing newline from reading the key out of a file or a " +
+        "copied line. It is not stripped automatically on purpose: the value was built " +
+        "wrongly and that should surface here, not be silently repaired.",
+    );
+  }
 
   // Optional second factor. Absent for accounts without 2FA, and absence is the
   // normal case — the client is then constructed exactly as it always was.
