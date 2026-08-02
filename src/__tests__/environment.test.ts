@@ -114,6 +114,7 @@ describe("loadColonyConfig", () => {
       engageThreadCompression: "verbatim",
       autoVoteEnabled: false,
       cognitionEnabled: true,
+      cognitionAllowThink: false,
       autoDownvoteEnabled: false,
       autoVoteMaxPerTick: 2,
       autoVoteIncludeComments: true,
