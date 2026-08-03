@@ -287,6 +287,50 @@ export interface ThreadDigestPost {
  * on every retry of the same set. Exposed so the caller can track
  * per-key retry counts without reaching into the buffer's internals.
  */
+/**
+ * Render a DB error so the CAUSE survives into the log, not just the query.
+ *
+ * `String(err)` on a Drizzle error yields `Error: Failed query: <the whole SQL>`
+ * and silently discards the driver's `cause` — which is where
+ * `violates foreign key constraint "fk_room"` actually lives. That is why 113
+ * digest-write failures over three months produced not one diagnosable line:
+ * the message named the statement and never the reason, so every occurrence
+ * looked identical and none of them could be acted on.
+ *
+ * An error report that cannot distinguish two different failures is a log entry
+ * pretending to be a diagnostic.
+ */
+export function describeDbError(err: unknown): string {
+  const parts: string[] = [String(err)];
+  const seen = new Set<unknown>();
+  let cur: unknown = err;
+  // Walk the cause chain; pg/postgres.js hang the useful fields off it.
+  for (let depth = 0; cur && depth < 5; depth++) {
+    if (seen.has(cur)) break;
+    seen.add(cur);
+    const e = cur as {
+      cause?: unknown;
+      code?: string;
+      detail?: string;
+      constraint_name?: string;
+      constraint?: string;
+      table_name?: string;
+      message?: string;
+    };
+    const facts: string[] = [];
+    if (e.code) facts.push(`code=${e.code}`);
+    if (e.constraint ?? e.constraint_name) {
+      facts.push(`constraint=${e.constraint ?? e.constraint_name}`);
+    }
+    if (e.table_name) facts.push(`table=${e.table_name}`);
+    if (e.detail) facts.push(`detail=${e.detail}`);
+    if (depth > 0 && e.message) facts.push(`message=${e.message}`);
+    if (facts.length > 0) parts.push(`[cause: ${facts.join(" ")}]`);
+    cur = e.cause;
+  }
+  return parts.join(" ");
+}
+
 export function computeThreadDigestDedupKey(
   postId: string,
   staged: ReadonlyArray<{ id: string }>,
@@ -372,6 +416,8 @@ export class ThreadDigestBuffer {
     const rt = runtime as unknown as {
       agentId?: string;
       createMemory?: (m: Memory, table: string) => Promise<void>;
+      ensureWorldExists?: (w: Record<string, unknown>) => Promise<void>;
+      ensureRoomExists?: (r: Record<string, unknown>) => Promise<void>;
     };
     const agentId = rt.agentId ?? "agent";
     // Stable dedup key: same post + same set of notif ids → same memory id.
@@ -405,12 +451,44 @@ export class ThreadDigestBuffer {
       createdAt: Date.now(),
     };
 
+    // `memories.room_id` carries a FOREIGN KEY (`fk_room` → `rooms.id`), so a
+    // digest written into a room that was never created is rejected outright.
+    // Every other Colony path (dispatchPostMention, dispatchDm) calls
+    // ensureWorldExists/ensureRoomExists before writing; this one did not, and
+    // so depended on some *other* path having created the room first. When that
+    // assumption did not hold the insert failed, was retried three times, and
+    // the digest was abandoned while its notifications were marked read anyway.
+    //
+    // Observed on eliza-gemma: 113 write failures / 37 abandonments between
+    // 2026-05-01 and 2026-08-03, all invisible because the catch below stringified
+    // the error and dropped the driver's cause (see `describeDbError`).
+    const worldId = createUniqueUuid(runtime, "colony-world");
+    if (typeof rt.ensureWorldExists === "function") {
+      await rt.ensureWorldExists({
+        id: worldId,
+        name: "The Colony",
+        agentId,
+        serverId: "thecolony.cc",
+      });
+    }
+    if (typeof rt.ensureRoomExists === "function") {
+      await rt.ensureRoomExists({
+        id: roomId,
+        name: title || "Colony post",
+        source: "colony",
+        type: "FEED",
+        channelId: postId,
+        serverId: "thecolony.cc",
+        worldId,
+      });
+    }
+
     if (typeof rt.createMemory === "function") {
       try {
         await rt.createMemory(memory, "messages");
       } catch (err) {
         logger.warn(
-          `COLONY_NOTIFICATION_ROUTER: thread digest write failed for post ${postId}: ${String(err)}`,
+          `COLONY_NOTIFICATION_ROUTER: thread digest write failed for post ${postId}: ${describeDbError(err)}`,
         );
         return null;
       }
