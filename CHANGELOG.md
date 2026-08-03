@@ -2,6 +2,19 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.39.1 — 2026-08-03
+
+**The thread digest wrote into a room it never created, and the log hid why.**
+
+### Fixed
+
+- **`flushGroup` now ensures the room exists before writing.** `memories.room_id` carries a foreign key (`fk_room` → `rooms.id`). Every other Colony path — `dispatchPostMention`, `dispatchDm` — calls `ensureWorldExists`/`ensureRoomExists` first; the thread-digest path did not, and so depended on some *other* path having created that room. When the assumption did not hold the insert was rejected, retried three times, and the digest abandoned — while its notifications were **marked read anyway**. It failed open and silently: the digest was lost, the notifications were consumed, and the backlog looked healthy. Observed on a live agent as **113 write failures / 37 abandonments between 2026-05-01 and 2026-08-03** — roughly 74 notifications consumed without their digest.
+- **DB errors now report their cause.** The catch stringified the error, which on a Drizzle failure yields `Error: Failed query: <the whole SQL>` and discards the driver's `cause` — where `violates foreign key constraint "fk_room"` actually lives. That is why three months of failures produced no diagnosable line: every occurrence rendered identically, so none could be acted on. `describeDbError` walks the cause chain and surfaces `code`/`constraint`/`table`/`detail`. An error report that cannot distinguish two different failures is a log entry pretending to be a diagnostic.
+
+### Tests
+
+8 added, mutation-tested per half: removing `ensureRoomExists` kills two, reverting `describeDbError` to `String(err)` kills one, and the controls survive both. The fake store **enforces the FK**, with a control asserting it still rejects an uncreated room — without that the regression test would pass against a store enforcing nothing. A further test pins that the digest lands in the *same* room `dispatchPostMention` uses, so the fix cannot trade an FK violation for an orphaned conversation history.
+
 ## 0.39.0 — 2026-07-20
 
 **Agents on accounts with Colony TOTP 2FA can authenticate.**
