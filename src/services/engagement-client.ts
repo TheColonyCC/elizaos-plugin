@@ -26,6 +26,12 @@
  *
  * The dedup cache holds the last 100 post ids. Round-robin state is per-tick
  * (not persisted across restarts).
+ *
+ * v0.40.0: the seen cache is a recency window, not a record of what the
+ * agent has written — so before generating, the client also checks whether
+ * it has already commented on the candidate (persistent commented ledger +
+ * a scan of the post's comments) and skips it if so. See
+ * `maxCommentsPerPost`.
  */
 
 import {
@@ -51,6 +57,15 @@ import { readWatchList, writeWatchList, type WatchEntry } from "../actions/watch
 
 const CACHE_KEY_PREFIX = "colony/engagement-client/seen";
 const SEEN_RING_SIZE = 100;
+/**
+ * v0.40.0: posts this client has actually commented on. Kept separately
+ * from — and far larger than — the seen ring, because the seen ring is a
+ * recency window and this is a record of writes. See `maxCommentsPerPost`.
+ */
+const COMMENTED_KEY_PREFIX = "colony/engagement-client/commented";
+const COMMENTED_LEDGER_SIZE = 2000;
+/** v0.40.0: comment pages scanned for an existing comment by the agent. */
+const OWN_COMMENT_SCAN_PAGES = 5;
 
 export interface ColonyEngagementClientConfig {
   intervalMinMs: number;
@@ -175,6 +190,26 @@ export interface ColonyEngagementClientConfig {
   autoVoteMaxPerTick?: number;
   /** v0.30.0: when true, thread comments fetched for prompt context are also vote-eligible. */
   autoVoteIncludeComments?: boolean;
+  /**
+   * v0.40.0: the most comments this client will leave on any one post.
+   * Default 1; 0 disables the check (pre-0.40 behaviour).
+   *
+   * The seen ring only remembers the last `SEEN_RING_SIZE` candidates, so a
+   * post that keeps resurfacing in a candidate source — the for-you feed can
+   * serve an old thread indefinitely — became eligible again each time it
+   * aged out of the ring, and was commented on again. One production agent
+   * commented 31 times on a single thread over five months this way, each
+   * comment a rephrasing of the last, with more than 100 other candidates
+   * seen between every pair of them.
+   *
+   * So the check is made against evidence that does not age out: a
+   * persistent ledger of posts this client has commented on, and a scan of
+   * the post's own comments for ones authored by the agent. The scan also
+   * covers comments made before the ledger existed or by another code path.
+   * The watched-post path is exempt — watching a post is an explicit
+   * operator request to keep engaging with it.
+   */
+  maxCommentsPerPost?: number;
 }
 
 const ENGAGEMENT_LENGTH_PROMPTS: Record<
@@ -532,6 +567,31 @@ export class ColonyEngagementClient {
       return;
     }
 
+    // v0.40.0: one-comment-per-post guard. Runs before the auto-vote pass and
+    // generation, so a thread already joined costs no model call and gets no
+    // repeat upvote.
+    const maxPerPost = this.config.maxCommentsPerPost ?? 1;
+    if (maxPerPost > 0) {
+      const existing = await this.countOwnComments(candidate.id, maxPerPost);
+      if (existing === null) {
+        // The prior-comment count could not be established. Fail closed:
+        // skip this tick WITHOUT marking seen, so the candidate is simply
+        // re-evaluated on a later tick once the fetch works again.
+        logger.warn(
+          `COLONY_ENGAGEMENT_CLIENT: could not check prior comments on ${candidate.id} — skipping tick`,
+        );
+        return;
+      }
+      if (existing >= maxPerPost) {
+        logger.info(
+          `🌐 COLONY_ENGAGEMENT_CLIENT: already commented on ${candidate.id} (${existing} ≥ cap ${maxPerPost}) — skipping`,
+        );
+        this.service.incrementStat?.("engageAlreadyCommentedSkips");
+        await this.markSeen(candidate.id);
+        return;
+      }
+    }
+
     const threadComments = await this.fetchThreadComments(candidate.id);
 
     // v0.30.0: auto-vote pass — score the candidate post + already-fetched
@@ -719,6 +779,7 @@ export class ColonyEngagementClient {
       // v0.29.0: record the just-landed body in the dedup ring.
       dedupRing?.record(content);
       await this.markSeen(candidate.id);
+      await this.recordCommented(candidate.id);
       this.service.incrementStat?.("commentsCreated", "autonomous");
       this.service.recordActivity?.(
         "comment_created",
@@ -1321,6 +1382,89 @@ export class ColonyEngagementClient {
     });
   }
 
+  /**
+   * v0.40.0: how many comments this agent already has on `postId`, counting
+   * no further than `stopAt`. Consults the persistent commented ledger first
+   * (no API call), then scans up to `OWN_COMMENT_SCAN_PAGES` pages of the
+   * post's comments for ones the agent authored, counting distinct ids so a
+   * `page` argument the server ignores cannot inflate the count.
+   *
+   * Returns `null` when a comment fetch fails, so the caller can fail
+   * closed. When the capability is absent altogether (no username, or a
+   * client without `getComments`) the ledger is the only evidence there is,
+   * and its count is returned.
+   */
+  private async countOwnComments(postId: string, stopAt: number): Promise<number | null> {
+    const ledgered = (await this.commentedPosts()).includes(postId) ? 1 : 0;
+    if (ledgered >= stopAt) return ledgered;
+
+    const self = (this.service as unknown as { username?: string }).username;
+    const client = this.service.client as unknown as {
+      getComments?: (id: string, page?: number) => Promise<unknown>;
+    };
+    if (!self || typeof client.getComments !== "function") return ledgered;
+
+    const own = new Set<string>();
+    const seenIds = new Set<string>();
+    try {
+      for (let page = 1; page <= OWN_COMMENT_SCAN_PAGES; page++) {
+        const result = await client.getComments(postId, page);
+        const items = Array.isArray(result)
+          ? (result as CommentLike[])
+          : ((result as { items?: CommentLike[] })?.items ?? []);
+        let fresh = 0;
+        for (const c of items) {
+          const id = c.id ?? "";
+          if (id && seenIds.has(id)) continue;
+          if (id) seenIds.add(id);
+          fresh++;
+          if (c.author?.username === self) own.add(id || `anon-${seenIds.size}-${fresh}`);
+        }
+        if (Math.max(own.size, ledgered) >= stopAt) break;
+        // No new ids means the listing is exhausted — or the server ignored
+        // `page` and served the same rows again. Either way, stop.
+        if (fresh === 0) break;
+        const total = (result as { total?: number })?.total;
+        if (typeof total === "number" && seenIds.size >= total) break;
+      }
+    } catch (err) {
+      logger.debug(
+        `COLONY_ENGAGEMENT_CLIENT: getComments(${postId}) failed during prior-comment check: ${String(err)}`,
+      );
+      return null;
+    }
+    return Math.max(own.size, ledgered);
+  }
+
+  private commentedKey(): string {
+    const username =
+      (this.service as unknown as { username?: string }).username ?? "unknown";
+    return `${COMMENTED_KEY_PREFIX}/${username}`;
+  }
+
+  private async commentedPosts(): Promise<string[]> {
+    const rt = this.runtime as unknown as {
+      getCache?: <T>(key: string) => Promise<T | undefined>;
+    };
+    if (typeof rt.getCache !== "function") return [];
+    const cached = await rt.getCache<string[]>(this.commentedKey());
+    return Array.isArray(cached) ? cached : [];
+  }
+
+  /** v0.40.0: record a post this client has commented on. Most recent first. */
+  private async recordCommented(postId: string): Promise<void> {
+    const rt = this.runtime as unknown as {
+      setCache?: <T>(key: string, value: T) => Promise<void>;
+    };
+    if (typeof rt.setCache !== "function") return;
+    const current = await this.commentedPosts();
+    const next = [postId, ...current.filter((id) => id !== postId)].slice(
+      0,
+      COMMENTED_LEDGER_SIZE,
+    );
+    await rt.setCache(this.commentedKey(), next);
+  }
+
   private cacheKey(): string {
     const username =
       (this.service as unknown as { username?: string }).username ?? "unknown";
@@ -1486,6 +1630,9 @@ export class ColonyEngagementClient {
       logger.info(
         `🌐 COLONY_ENGAGEMENT_CLIENT commented on watched post ${postId}${parentCommentId ? ` (threaded under ${parentCommentId.slice(0, 8)})` : ""}`,
       );
+      // v0.40.0: the watched path is exempt from the per-post cap, but its
+      // comments still count against it for the normal candidate path.
+      await this.recordCommented(postId);
       this.service.incrementStat?.("commentsCreated", "autonomous");
       this.service.recordActivity?.(
         "comment_created",

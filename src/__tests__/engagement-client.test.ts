@@ -683,7 +683,13 @@ describe("ColonyEngagementClient", () => {
       const getCommentsSpy = vi.fn();
       (service.client as unknown as Record<string, unknown>).getComments = getCommentsSpy;
       service.client.createComment.mockResolvedValue({});
-      const c = new ColonyEngagementClient(service as never, runtime, config({ threadComments: 0 }));
+      // maxCommentsPerPost: 0 — this test is about thread context only; the
+      // v0.40.0 prior-comment guard fetches comments independently of it.
+      const c = new ColonyEngagementClient(
+        service as never,
+        runtime,
+        config({ threadComments: 0, maxCommentsPerPost: 0 }),
+      );
       await c.start();
       await vi.advanceTimersByTimeAsync(2001);
       expect(getCommentsSpy).not.toHaveBeenCalled();
@@ -700,7 +706,14 @@ describe("ColonyEngagementClient", () => {
         throw new Error("network");
       });
       service.client.createComment.mockResolvedValue({});
-      const c = new ColonyEngagementClient(service as never, runtime, config({ threadComments: 3 }));
+      // maxCommentsPerPost: 0 — thread CONTEXT is best-effort and this test
+      // covers that. The v0.40.0 prior-comment guard deliberately fails
+      // closed on the same error (see v40-features.test.ts).
+      const c = new ColonyEngagementClient(
+        service as never,
+        runtime,
+        config({ threadComments: 3, maxCommentsPerPost: 0 }),
+      );
       await c.start();
       await vi.advanceTimersByTimeAsync(2001);
       // Still calls createComment even though thread context failed
