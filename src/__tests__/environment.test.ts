@@ -100,6 +100,7 @@ describe("loadColonyConfig", () => {
       dmContextMessages: 0,
       engageUseRising: false,
       engageForYou: false,
+      engageMaxCommentsPerPost: 1,
       engageAutoFollow: false,
       engageAutoFollowMaxPerTick: 2,
       engageTrendingBoost: false,
@@ -642,6 +643,23 @@ describe("loadColonyConfig", () => {
         COLONY_ENGAGE_THREAD_COMMENTS: "abc",
       })).engageThreadComments,
     ).toBe(3);
+  });
+
+  // v0.40.0
+  it("parses COLONY_ENGAGE_MAX_COMMENTS_PER_POST: default 1, clamps to 0-20", () => {
+    const load = (v?: string) =>
+      loadColonyConfig(
+        fakeRuntime(null, {
+          COLONY_API_KEY: "col_a",
+          ...(v === undefined ? {} : { COLONY_ENGAGE_MAX_COMMENTS_PER_POST: v }),
+        }),
+      ).engageMaxCommentsPerPost;
+    expect(load()).toBe(1);
+    expect(load("3")).toBe(3);
+    expect(load("0")).toBe(0);
+    expect(load("99")).toBe(20);
+    expect(load("-4")).toBe(0);
+    expect(load("abc")).toBe(1);
   });
 
   it("parses COLONY_ENGAGE_REQUIRE_TOPIC_MATCH as boolean", () => {

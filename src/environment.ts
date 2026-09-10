@@ -223,6 +223,13 @@ export interface ColonyConfig {
    */
   engageForYou: boolean;
   /**
+   * v0.40.0: the most comments the engagement client will leave on any one
+   * post, checked against a persistent commented ledger and the post's own
+   * comments rather than the 100-entry seen ring. Default 1; 0 disables.
+   * `COLONY_ENGAGE_MAX_COMMENTS_PER_POST`.
+   */
+  engageMaxCommentsPerPost: number;
+  /**
    * v0.36.0: when `true`, the engagement client auto-follows the author of any
    * content its auto-vote pass up-votes (a demonstrated high-quality
    * interaction), growing the follow graph that feeds the for-you feed.
@@ -891,6 +898,13 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
   const forYouRaw = getSetting(runtime, "COLONY_ENGAGE_FOR_YOU", "false")!.toLowerCase();
   const engageForYou = forYouRaw === "true" || forYouRaw === "1" || forYouRaw === "yes";
 
+  // v0.40.0 — one-comment-per-post guard for the engagement client.
+  const maxPerPostRaw = getSetting(runtime, "COLONY_ENGAGE_MAX_COMMENTS_PER_POST", "1")!;
+  const parsedMaxPerPost = Number.parseInt(maxPerPostRaw, 10);
+  const engageMaxCommentsPerPost = Number.isFinite(parsedMaxPerPost)
+    ? Math.max(0, Math.min(20, parsedMaxPerPost))
+    : 1;
+
   // v0.36.0 — auto-follow authors of up-voted content to grow the follow graph.
   const autoFollowRaw = getSetting(runtime, "COLONY_AUTO_FOLLOW_ENABLED", "false")!.toLowerCase();
   const engageAutoFollow = autoFollowRaw === "true" || autoFollowRaw === "1" || autoFollowRaw === "yes";
@@ -1145,6 +1159,7 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     dmContextMessages,
     engageUseRising,
     engageForYou,
+    engageMaxCommentsPerPost,
     engageAutoFollow,
     engageAutoFollowMaxPerTick,
     engageTrendingBoost,

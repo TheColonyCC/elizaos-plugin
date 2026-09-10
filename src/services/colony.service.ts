@@ -103,6 +103,12 @@ export interface ColonyServiceStats {
    */
   commentDedupSkips: number;
   /**
+   * v0.40.0: engagement candidates skipped because the agent had already
+   * commented on the post (`COLONY_ENGAGE_MAX_COMMENTS_PER_POST`). Non-zero
+   * is normal wherever a candidate source keeps re-serving joined threads.
+   */
+  engageAlreadyCommentedSkips: number;
+  /**
    * v0.30.0: autonomous upvotes / downvotes cast by the engagement
    * client's auto-vote pass. Separate from `votesCast` (which is
    * incremented by `CURATE_COLONY_FEED` + the imperative VOTE action)
@@ -238,6 +244,7 @@ export class ColonyService extends Service {
     catchupsTriggered: 0,
     threadDigestAbandonments: 0,
     commentDedupSkips: 0,
+    engageAlreadyCommentedSkips: 0,
     autoUpvotesCast: 0,
     autoDownvotesCast: 0,
     peerMemoryDistillations: 0,
@@ -1189,6 +1196,7 @@ export class ColonyService extends Service {
         threadCompression: service.colonyConfig.engageThreadCompression,
         useRising: service.colonyConfig.engageUseRising,
         forYou: service.colonyConfig.engageForYou,
+        maxCommentsPerPost: service.colonyConfig.engageMaxCommentsPerPost,
         autoFollow: service.colonyConfig.engageAutoFollow,
         autoFollowMaxPerTick: service.colonyConfig.engageAutoFollowMaxPerTick,
         trendingBoost: service.colonyConfig.engageTrendingBoost,
