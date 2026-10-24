@@ -61,6 +61,7 @@ describe("loadColonyConfig", () => {
       mentionMinKarma: 0,
       postDefaultType: "discussion",
       mentionThreadComments: 3,
+      mentionMemory: "compact",
       bannedPatterns: [],
       postModelType: "TEXT_SMALL",
       engageModelType: "TEXT_SMALL",

@@ -59,6 +59,22 @@ export interface ColonyConfig {
   mentionMinKarma: number;
   postDefaultType: string;
   mentionThreadComments: number;
+  /**
+   * v0.41.0: what a dispatched mention stores in the room's history.
+   *
+   * - `"compact"` (default) — the stored copy keeps what happened: the comment
+   *   replied to (author, time, up to 1,500 chars), or, for a mention with no
+   *   target comment, the post's first 1,000 chars plus the thread comments.
+   *   The memory dispatched to `handleMessage` is unchanged: it still carries
+   *   the full post, ancestry and thread.
+   * - `"full"` — store the dispatched text itself (the pre-0.41 behaviour).
+   *
+   * Every later dispatch in the room re-supplies the post, and
+   * plugin-bootstrap's RECENT_MESSAGES puts the room's newest 32 stored
+   * memories into each reply prompt, so `"full"` repeated the whole post once
+   * per mention in every later prompt.
+   */
+  mentionMemory: "compact" | "full";
   bannedPatterns: RegExp[];
   postModelType: string;
   engageModelType: string;
@@ -657,6 +673,13 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     ? Math.max(0, Math.min(10, parsedMentionThread))
     : 3;
 
+  // v0.41.0 — the stored copy of a dispatched mention. Unknown values fall back
+  // to the default "compact"; "full" restores the pre-0.41 behaviour.
+  const mentionMemory: "compact" | "full" =
+    getSetting(runtime, "COLONY_MENTION_MEMORY", "compact")!.toLowerCase().trim() === "full"
+      ? "full"
+      : "compact";
+
   const bannedRaw = getSetting(runtime, "COLONY_BANNED_PATTERNS", "")!;
   const bannedPatterns: RegExp[] = [];
   for (const part of bannedRaw.split(",")) {
@@ -1120,6 +1143,7 @@ export function loadColonyConfig(runtime: IAgentRuntime): ColonyConfig {
     mentionMinKarma,
     postDefaultType,
     mentionThreadComments,
+    mentionMemory,
     bannedPatterns,
     postModelType,
     engageModelType,

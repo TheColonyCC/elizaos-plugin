@@ -435,8 +435,12 @@ describe("ColonyInteractionClient", () => {
     await client.start();
     await vi.advanceTimersByTimeAsync(0);
     expect(runtime.createMemory).toHaveBeenCalled();
-    const memoryCall = runtime.createMemory.mock.calls[0][0];
-    expect(memoryCall.content.text).toBe("");
+    // The dispatched text is empty; since v0.41.0 the stored copy is compact
+    // and names the post by id when it has no title.
+    const dispatched = runtime.messageService.handleMessage.mock.calls[0][1];
+    expect(dispatched.content.text).toBe("");
+    const stored = runtime.createMemory.mock.calls[0][0];
+    expect(stored.content.text).toBe("[on post post-1]");
   });
 
   it("handles an unparseable created_at timestamp", async () => {
@@ -771,8 +775,10 @@ describe("ColonyInteractionClient", () => {
       ]);
       await client.start();
       await vi.advanceTimersByTimeAsync(0);
-      const memoryCall = runtime.createMemory.mock.calls[0];
-      const text = (memoryCall?.[0] as { content?: { text?: string } }).content?.text ?? "";
+      // The DISPATCHED memory is what the prompt sees; since v0.41.0 the
+      // stored copy is compact (see v41-features.test.ts).
+      const memoryCall = runtime.messageService.handleMessage.mock.calls[0];
+      const text = (memoryCall?.[1] as { content?: { text?: string } }).content?.text ?? "";
       expect(text).toContain("REPLY TARGET");
       expect(text).toContain("@carol");
       expect(text).toContain("leaf-target");
@@ -808,8 +814,10 @@ describe("ColonyInteractionClient", () => {
       ]);
       await client.start();
       await vi.advanceTimersByTimeAsync(0);
-      const memoryCall = runtime.createMemory.mock.calls[0];
-      const text = (memoryCall?.[0] as { content?: { text?: string } }).content?.text ?? "";
+      // The DISPATCHED memory is what the prompt sees; since v0.41.0 the
+      // stored copy is compact (see v41-features.test.ts).
+      const memoryCall = runtime.messageService.handleMessage.mock.calls[0];
+      const text = (memoryCall?.[1] as { content?: { text?: string } }).content?.text ?? "";
       expect(text).toContain("REPLY TARGET");
       expect(text).toContain("@carol");
       expect(text).not.toContain("Ancestry");
@@ -915,8 +923,10 @@ describe("ColonyInteractionClient", () => {
       ]);
       await client.start();
       await vi.advanceTimersByTimeAsync(0);
-      const memoryCall = runtime.createMemory.mock.calls[0];
-      const text = (memoryCall?.[0] as { content?: { text?: string } }).content?.text ?? "";
+      // The DISPATCHED memory is what the prompt sees; since v0.41.0 the
+      // stored copy is compact (see v41-features.test.ts).
+      const memoryCall = runtime.messageService.handleMessage.mock.calls[0];
+      const text = (memoryCall?.[1] as { content?: { text?: string } }).content?.text ?? "";
       expect(text).toContain("REPLY TARGET");
       expect(text).toContain("@carol");
       // The single non-target node (c-B / @dave) appears in the ancestry exactly once.
@@ -945,8 +955,10 @@ describe("ColonyInteractionClient", () => {
       ]);
       await client.start();
       await vi.advanceTimersByTimeAsync(0);
-      const memoryCall = runtime.createMemory.mock.calls[0];
-      const text = (memoryCall?.[0] as { content?: { text?: string } }).content?.text ?? "";
+      // The DISPATCHED memory is what the prompt sees; since v0.41.0 the
+      // stored copy is compact (see v41-features.test.ts).
+      const memoryCall = runtime.messageService.handleMessage.mock.calls[0];
+      const text = (memoryCall?.[1] as { content?: { text?: string } }).content?.text ?? "";
       // target's author was non-object, projectComment returns undefined author,
       // dispatch renders "@unknown:" as the fallback.
       expect(text).toContain("REPLY TARGET");
