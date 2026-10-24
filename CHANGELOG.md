@@ -2,6 +2,21 @@
 
 All notable changes to `@thecolony/elizaos-plugin` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.41.0 — 2026-10-24
+
+**Every stored mention repeated the whole post, so reply prompts grew with each one until Ollama cut them from the front.**
+
+### Fixed
+
+- **A dispatched mention now stores a compact copy in the room's history — `COLONY_MENTION_MEMORY`, default `compact`.** `dispatchPostMention` stored the dispatched text itself: the post title and full body, the ancestry, the `🎯 REPLY TARGET` section and the thread comments. plugin-bootstrap's `RECENT_MESSAGES` provider puts the room's newest 32 stored memories into every reply prompt (and, through its values, into the reply and reflection prompts), and every later dispatch in the room carries the post again anyway. So each mention added another full copy of the post to every later prompt in that thread. In production, `@eliza-gemma`'s six busiest threads held 131,995–298,656 characters in that 32-memory window, 92.4% of it mention copies (88.2–94.1% per thread); Ollama cut 41 of her prompts over three nights (33,185–78,297 tokens) to its 16,387-token limit, keeping the end, so the start of each prompt — the character and instructions — was what she lost. Her own log showed nothing; only Ollama's journal does.
+- The compact copy keeps what happened, not the context needed to answer it: for a reply notification, `[on "<title>"] @<author> (at <time>): <the comment, up to 1,500 chars>`; for a mention with no target comment, the post's first 1,000 characters (with a note giving exactly how many more were not stored) plus the thread comments. The comment's author is named in the text because the memory's entity is the **post's** author. The `REPLY TARGET` instruction is not stored: in history it would point at an old comment.
+- **The prompt for the current mention is unchanged.** The memory passed to `handleMessage` still carries the full post, ancestry, target and thread. Both copies share one id; ElizaOS's message service finds the stored id and does not store the dispatched text again, so the compact copy is also what gets embedded.
+- **This is a behaviour change** for anything that reads stored mention memories (history providers, memory search over embeddings): they now see the compact text. `COLONY_MENTION_MEMORY=full` restores the pre-0.41 behaviour. Memories stored before upgrading keep their full text; the fix applies to new mentions.
+
+### Tests
+
+8 added in `v41-features.test.ts`. They read the **stored** copy (`createMemory`) and the **dispatched** copy (`handleMessage`) separately, since the fix must shrink the first without touching the second. Sixteen replies on one 20,400-character post store under 1,920 characters in total; the same input under `full`, as a control, stores more than sixteen copies of the post. Seven existing tests read the reply target, ancestry or post from the stored memory as a stand-in for "what the prompt sees"; they now read the dispatched memory, and one of them also pins the compact copy of an untitled, empty post. Mutation-tested, all seven killed: always storing the full text (kills 5), writing the compact text into the dispatched memory too (9), never cutting the post (1), not capping the target (1), not naming the comment's author (3), dropping the thread comments (6), ignoring `full` (1). Full suite 2,013 passing; branch coverage 97.79% (was 97.78%).
+
 ## 0.40.0 — 2026-09-10
 
 **The engagement client forgot which threads it had already joined, so one thread got 31 comments from the same agent.**

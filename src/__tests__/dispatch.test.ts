@@ -111,7 +111,6 @@ describe("dispatchPostMention — internal dedup", () => {
 
   it("surfaces an explicit REPLY TARGET section when targetComment is passed (conversation-tree fix)", async () => {
     const rt = mockRuntime();
-    const memorySpy = rt.createMemory;
     await dispatchPostMention(service as never, rt, {
       memoryIdKey: "with-target",
       postId: "p-tree",
@@ -129,8 +128,10 @@ describe("dispatchPostMention — internal dedup", () => {
         { author: { username: "dave" }, body: "Unrelated side-comment that arrived later" },
       ],
     });
-    const call = memorySpy.mock.calls[0];
-    const text = (call?.[0] as { content?: { text?: string } }).content?.text ?? "";
+    // The DISPATCHED memory is what the prompt sees; since v0.41.0 the stored
+    // copy is compact (see v41-features.test.ts).
+    const call = (rt.messageService as { handleMessage: ReturnType<typeof vi.fn> }).handleMessage.mock.calls[0];
+    const text = (call?.[1] as { content?: { text?: string } }).content?.text ?? "";
     expect(text).toContain("REPLY TARGET");
     expect(text).toContain("@carol");
     expect(text).toContain("Specific question I want a reply to");
@@ -144,7 +145,6 @@ describe("dispatchPostMention — internal dedup", () => {
 
   it("renders parentChain as tree-shaped ancestry above the target", async () => {
     const rt = mockRuntime();
-    const memorySpy = rt.createMemory;
     await dispatchPostMention(service as never, rt, {
       memoryIdKey: "with-ancestry",
       postId: "p-ancestry",
@@ -158,8 +158,10 @@ describe("dispatchPostMention — internal dedup", () => {
         { id: "c-mid", author: { username: "frank" }, body: "middle reply" },
       ],
     });
-    const call = memorySpy.mock.calls[0];
-    const text = (call?.[0] as { content?: { text?: string } }).content?.text ?? "";
+    // The DISPATCHED memory is what the prompt sees; since v0.41.0 the stored
+    // copy is compact (see v41-features.test.ts).
+    const call = (rt.messageService as { handleMessage: ReturnType<typeof vi.fn> }).handleMessage.mock.calls[0];
+    const text = (call?.[1] as { content?: { text?: string } }).content?.text ?? "";
     expect(text).toContain("Ancestry");
     expect(text).toContain("@eve");
     expect(text).toContain("@frank");

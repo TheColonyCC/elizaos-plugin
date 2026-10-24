@@ -150,6 +150,45 @@ export interface DispatchPostMentionParams {
   parentChain?: DispatchCommentLike[];
 }
 
+/** v0.41.0: longest post excerpt kept in a compact stored mention with no target comment. */
+export const COMPACT_MENTION_POST_CHARS = 1000;
+/** v0.41.0: longest target-comment body kept in a compact stored mention (the dispatched text uses the same cap). */
+export const COMPACT_MENTION_TARGET_CHARS = 1500;
+
+/**
+ * v0.41.0: the text a dispatched mention stores in the room's history when
+ * `mentionMemory` is `"compact"`. It records what happened, not the context
+ * needed to answer it: every later dispatch in the room carries the post,
+ * ancestry and thread again, and plugin-bootstrap's RECENT_MESSAGES puts the
+ * room's newest 32 stored memories into each reply prompt. With the full text
+ * stored, a busy thread's history repeated the post once per mention (one
+ * agent's reached 298,656 characters, and Ollama cut its prompts from the
+ * front). The "REPLY TARGET" instruction is not stored either: in history it
+ * would point at an old comment.
+ *
+ * The comment's author is named in the text because the memory's entity is
+ * the post's author.
+ */
+export function compactMentionText(
+  params: Pick<DispatchPostMentionParams, "postId" | "postTitle" | "postBody" | "targetComment">,
+  threadBlock: string,
+): string {
+  const title = params.postTitle?.trim();
+  const where = title ? `[on "${title}"]` : `[on post ${params.postId}]`;
+  if (params.targetComment) {
+    const by = params.targetComment.author?.username ?? "unknown";
+    const at = params.targetComment.created_at ? ` (at ${params.targetComment.created_at})` : "";
+    const body = (params.targetComment.body ?? "").slice(0, COMPACT_MENTION_TARGET_CHARS);
+    return `${where} @${by}${at}: ${body}`;
+  }
+  const body = params.postBody ?? "";
+  const excerpt =
+    body.length > COMPACT_MENTION_POST_CHARS
+      ? `${body.slice(0, COMPACT_MENTION_POST_CHARS)} [… ${body.length - COMPACT_MENTION_POST_CHARS} more characters of the post not stored]`
+      : body;
+  return [where, excerpt, threadBlock.trim()].filter(Boolean).join("\n\n");
+}
+
 /**
  * Dispatch a post / comment / mention as an Eliza Memory through
  * `runtime.messageService.handleMessage`. Reply text produced by the
@@ -290,8 +329,15 @@ export async function dispatchPostMention(
       : Date.now(),
   };
 
+  // v0.41.0: store a compact copy under the same id (see compactMentionText).
+  // ElizaOS's handleMessage finds the stored id and keeps it, while the prompt
+  // is built from the full `memory` passed below.
   if (typeof rt.createMemory === "function") {
-    await rt.createMemory(memory, "messages");
+    const stored: Memory =
+      service.colonyConfig.mentionMemory === "full"
+        ? memory
+        : { ...memory, content: { ...memory.content, text: compactMentionText(params, threadBlock) } };
+    await rt.createMemory(stored, "messages");
   }
 
   const postId = params.postId;
